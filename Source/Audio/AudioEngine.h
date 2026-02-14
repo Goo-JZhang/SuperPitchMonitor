@@ -1,0 +1,152 @@
+#pragma once
+
+#include <juce_core/juce_core.h>
+#include <juce_data_structures/juce_data_structures.h>
+#include <juce_events/juce_events.h>
+#include <juce_graphics/juce_graphics.h>
+#include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_gui_extra/juce_gui_extra.h>
+#include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_audio_devices/juce_audio_devices.h>
+#include <juce_audio_formats/juce_audio_formats.h>
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_audio_utils/juce_audio_utils.h>
+#include <juce_dsp/juce_dsp.h>
+#include "../Utils/Config.h"
+#include "AudioInputSource.h"
+#include "SpectrumData.h"
+
+// Forward declarations
+namespace spm { class AudioSimulator; }
+
+namespace spm {
+
+// Forward declarations
+class SpectrumAnalyzer;
+class PolyphonicDetector;
+class MultiResolutionAnalyzer;
+
+// Band Spectrum Data (for multi-resolution analysis)
+struct BandSpectrumData;
+struct MultiResolutionData;
+
+/**
+ * Audio Engine
+ * Manages audio devices, audio processing and analysis
+ * Supports both real audio input and simulated input modes
+ */
+class AudioEngine : public juce::AudioAppComponent,
+                    private juce::Thread
+{
+public:
+    // Operating modes
+    enum class Mode {
+        RealDevice,     // Real audio device
+        Simulated       // Simulated audio input (for debugging)
+    };
+
+    using SpectrumCallback = std::function<void(const SpectrumData&)>;
+    using PitchCallback = std::function<void(const PitchVector&)>;
+    using InputLevelCallback = std::function<void(float)>;
+
+    AudioEngine();
+    ~AudioEngine() override;
+
+    // Initialize audio device
+    juce::String initialize();
+    
+    // Start/Stop detection
+    void start();
+    void stop();
+    bool isRunning() const { return isRunning_; }
+    
+    // Operating mode
+    void setMode(Mode mode);
+    Mode getMode() const { return currentMode_; }
+    
+    // Set audio source in simulation mode (legacy)
+    void setSimulator(AudioSimulator* simulator);
+    
+    // Set audio input source (new unified interface)
+    void setInputSource(std::shared_ptr<AudioInputSource> source);
+    
+    // Callback settings
+    void setSpectrumCallback(SpectrumCallback callback) { spectrumCallback_ = callback; }
+    void setPitchCallback(PitchCallback callback) { pitchCallback_ = callback; }
+    void setInputLevelCallback(InputLevelCallback callback) { inputLevelCallback_ = callback; }
+    
+    // Configuration settings
+    void setQualityLevel(Config::Performance::QualityLevel level);
+    void setDetectionRange(float minFreq, float maxFreq);
+    
+    // Multi-resolution analysis control
+    void setMultiResolutionEnabled(bool enabled);
+    bool isMultiResolutionEnabled() const { return useMultiResolution_; }
+    
+    // Get current configuration
+    double getSampleRate() const { return sampleRate_; }
+    int getBufferSize() const { return bufferSize_; }
+    Mode getCurrentMode() const { return currentMode_; }
+    
+    // Get current input source name (for display)
+    juce::String getInputSourceName() const { return inputSource_ ? inputSource_->getName() : "None"; }
+
+    // AudioAppComponent interface (only used in RealDevice mode)
+    void prepareToPlay(int samplesPerBlockExpected, double newSampleRate) override;
+    void releaseResources() override;
+    void getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) override;
+    
+    // Process audio block (used by simulator)
+    void processAudioBlock(const juce::AudioBuffer<float>& buffer);
+
+private:
+    // Operating mode
+    Mode currentMode_ = Mode::RealDevice;
+    AudioSimulator* simulator_ = nullptr;
+    
+    // New unified input source
+    std::shared_ptr<AudioInputSource> inputSource_;
+    
+    // Audio parameters
+    double sampleRate_ = Config::Audio::DefaultSampleRate;
+    int bufferSize_ = Config::Audio::DefaultBufferSize;
+    
+    // State
+    std::atomic<bool> isRunning_{false};
+    std::atomic<bool> shouldExit_{false};
+    
+    // Callbacks
+    SpectrumCallback spectrumCallback_;
+    PitchCallback pitchCallback_;
+    InputLevelCallback inputLevelCallback_;
+    
+    // Processing components
+    std::unique_ptr<SpectrumAnalyzer> spectrumAnalyzer_;
+    std::unique_ptr<PolyphonicDetector> polyphonicDetector_;
+    std::unique_ptr<MultiResolutionAnalyzer> multiResAnalyzer_;
+    
+    // Multi-resolution mode
+    bool useMultiResolution_ = false;
+    std::unique_ptr<MultiResolutionData> multiResData_;
+    
+    // Circular buffer (used in RealDevice mode)
+    static constexpr int FIFOSize = 8;
+    juce::AbstractFifo fifo_{FIFOSize};
+    juce::HeapBlock<juce::AudioBuffer<float>> audioBuffers_;
+    std::atomic<int> writeIndex_{0};
+    std::atomic<int> readIndex_{0};
+    
+    // Input level smoother
+    juce::LinearSmoothedValue<float> inputLevel_{0.0f};
+    
+    // Processing thread
+    void run() override;  // Thread implementation
+    
+    // Simulation mode processing
+    void startSimulation();
+    void stopSimulation();
+    
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioEngine)
+};
+
+} // namespace spm

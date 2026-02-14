@@ -1,0 +1,62 @@
+# Git attributes for cross-platform development
+
+# Auto-detect text files and handle line endings
+* text=auto
+
+# Force specific file types to use LF (Unix-style) line endings
+*.cpp text eol=lf
+*.h text eol=lf
+*.hpp text eol=lf
+*.c text eol=lf
+*.mm text eol=lf
+
+# CMake files
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+
+# Script files
+*.py text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+
+# Web files
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.xml text eol=lf
+*.json text eol=lf
+
+# Markdown and documentation
+*.md text eol=lf
+*.txt text eol=lf
+
+# Treat binary files as binary (no line ending conversion)
+*.wav binary
+*.mp3 binary
+*.aiff binary
+*.flac binary
+*.ogg binary
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg text
+
+*.pdf binary
+*.zip binary
+*.tar binary
+*.gz binary
+*.7z binary
+
+# macOS specific
+*.dylib binary
+*.framework binary
+*.bundle binary
+
+# Windows specific
+*.exe binary
+*.dll binary
+*.lib binary
+*.pdb binary
