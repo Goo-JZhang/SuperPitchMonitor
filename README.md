@@ -14,34 +14,46 @@ A real-time polyphonic pitch detection and visualization application based on th
 
 ### One-Click Setup
 
-Choose your platform:
+Choose your platform and build type:
 
 #### Windows
+
 ```powershell
-# Run setup script (generates test audio + builds project)
+# Release build (default)
 scripts\build\setup_windows.bat
+# or
+scripts\build\setup_windows.bat Release
+
+# Debug build
+scripts\build\setup_windows.bat Debug
+
+# Quick build (without setup)
+scripts\build\build_release.bat
+scripts\build\build_debug.bat
 ```
 
 #### macOS
-```bash
-# Run setup script
-chmod +x scripts/build/setup_macos.sh
-scripts/build/setup_macos.sh
 
-# Then build
-cd build-macos
-cmake --build . --config Release
+```bash
+# Release build
+chmod +x scripts/build/build_release.sh
+scripts/build/build_release.sh
+
+# Debug build
+chmod +x scripts/build/build_debug.sh
+scripts/build/build_debug.sh
 ```
 
 #### Linux
-```bash
-# Run setup script
-chmod +x scripts/build/setup_linux.sh
-scripts/build/setup_linux.sh
 
-# Then build
-cd build-linux
-cmake --build . --config Release -j$(nproc)
+```bash
+# Release build
+chmod +x scripts/build/build_release.sh
+scripts/build/build_release.sh
+
+# Debug build
+chmod +x scripts/build/build_debug.sh
+scripts/build/build_debug.sh
 ```
 
 ## Manual Build Guide
@@ -245,19 +257,26 @@ git push origin main
 
 ## Directory Structure
 
-### Generated Directories (not in Git)
+### Generated Files and Directories (not in Git)
 
-| Directory | Purpose | Persistence |
-|-----------|---------|-------------|
+| Directory/File | Purpose | Persistence |
+|----------------|---------|-------------|
+| `SuperPitchMonitor.exe` | Main executable (Debug or Release) | ❌ Rebuilt on each compile |
 | `ThirdParty/` | External dependencies (JUCE, etc.) | ✅ Persistent |
 | `Saved/Logs/` | Application runtime logs | ✅ Persistent |
-| `build-*/` | Build outputs and build logs | ❌ Can be deleted |
+| `build-*/` | Build intermediates and logs | ❌ Can be deleted |
 | `Resources/TestAudio/` | Generated test audio files | ✅ Persistent |
 
 ### Logs Location
 
 - **Runtime Logs**: `Saved/Logs/*.log` - Application execution logs
 - **Build Logs**: `build-*/logs/*.log` - CMake and compilation logs (useful for debugging build failures)
+
+### Executable Output
+
+The compiled executable `SuperPitchMonitor.exe` is placed directly in the project root directory for easy access:
+- Debug build: `SuperPitchMonitor.exe` (with debug symbols)
+- Release build: `SuperPitchMonitor.exe` (optimized)
 
 ## Troubleshooting
 

@@ -37,30 +37,46 @@ Generates basic test signals (sine waves, sweeps, noise).
 
 ## Build Scripts (`build/`)
 
-### setup_windows.bat
-One-click Windows build setup. Generates test audio and builds the project.
+### Windows
+
+#### setup_windows.bat
+Interactive Windows build script with Debug/Release selection.
 
 **Usage:**
 ```powershell
+# Release build (default)
 scripts\build\setup_windows.bat
+
+# Debug build
+scripts\build\setup_windows.bat Debug
 ```
 
-### setup_macos.sh
-One-click macOS build setup.
+#### build_release.bat / build_debug.bat
+Direct build scripts without prompts.
+
+**Usage:**
+```powershell
+# Release build
+scripts\build\build_release.bat
+
+# Debug build
+scripts\build\build_debug.bat
+```
+
+### macOS / Linux
+
+#### build_release.sh / build_debug.sh
+Build scripts for Unix-like systems.
 
 **Usage:**
 ```bash
-chmod +x scripts/build/setup_macos.sh
-scripts/build/setup_macos.sh
-```
+# Release build
+chmod +x scripts/build/build_release.sh
+scripts/build/build_release.sh
 
-### setup_linux.sh
-One-click Linux build setup.
-
-**Usage:**
-```bash
-chmod +x scripts/build/setup_linux.sh
-scripts/build/setup_linux.sh
+# Debug build
+chmod +x scripts/build/build_debug.sh
+scripts/build/build_debug.sh
 ```
 
 ## Test Scripts (`test/`)

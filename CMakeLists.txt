@@ -15,6 +15,17 @@ set(FETCHCONTENT_BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty" CACHE PATH "E
 project(SuperPitchMonitor VERSION 1.0.0 LANGUAGES CXX OBJCXX)
 
 #==============================================================================
+# Output Directory Configuration
+#==============================================================================
+
+# Set output directory to project root for easy access
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_CURRENT_SOURCE_DIR}")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_CURRENT_SOURCE_DIR}")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_CURRENT_SOURCE_DIR}")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_CURRENT_SOURCE_DIR}")
+
+#==============================================================================
 # JUCE Setup (via FetchContent)
 #==============================================================================
 
