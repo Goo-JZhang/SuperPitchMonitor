@@ -63,18 +63,38 @@ juce::File FileAudioInput::getTestAudioDirectory()
                       .getChildFile("Resources")
                       .getChildFile("TestAudio"));
     
-    // 6. Hardcoded project path (fallback)
+    // 6. macOS app bundle - from Contents/MacOS executable to project root
+    auto exeFile = juce::File::getSpecialLocation(juce::File::currentExecutableFile);
+    possiblePaths.add(exeFile
+                      .getParentDirectory()  // MacOS
+                      .getParentDirectory()  // Contents
+                      .getParentDirectory()  // SuperPitchMonitor.app
+                      .getParentDirectory()  // Project root
+                      .getChildFile("Resources")
+                      .getChildFile("TestAudio"));
+    
+    // 7. Direct from executable location (for development builds)
+    possiblePaths.add(exeFile.getParentDirectory()  // MacOS or build dir
+                      .getParentDirectory()  // Contents or build root
+                      .getChildFile("Resources")
+                      .getChildFile("TestAudio"));
+    
+    // 8. Hardcoded project path (fallback)
     possiblePaths.add(juce::File("C:\\SuperPitchMonitor")
                       .getChildFile("Resources")
                       .getChildFile("TestAudio"));
 
+    fprintf(stderr, "[FileAudioInput] Searching for test audio directory...\n");
     for (auto& path : possiblePaths)
     {
+        fprintf(stderr, "[FileAudioInput] Checking: %s - exists=%d, isDir=%d\n", 
+                path.getFullPathName().toRawUTF8(), 
+                (int)path.exists(), 
+                (int)path.isDirectory());
         if (path.exists() && path.isDirectory())
         {
-           #if defined(DEBUG) || defined(_DEBUG)
-            DBG("[FileAudioInput] Found test audio directory: " << path.getFullPathName());
-           #endif
+            fprintf(stderr, "[FileAudioInput] Found test audio directory: %s\n", 
+                    path.getFullPathName().toRawUTF8());
             return path;
         }
     }
@@ -173,8 +193,12 @@ bool FileAudioInput::loadFile(const juce::File& file)
 
 bool FileAudioInput::loadTestFile(const juce::String& fileName)
 {
+    fprintf(stderr, "[FileAudioInput] loadTestFile called: %s\n", fileName.toRawUTF8());
     auto testDir = getTestAudioDirectory();
+    fprintf(stderr, "[FileAudioInput] Test directory: %s\n", testDir.getFullPathName().toRawUTF8());
     auto file = testDir.getChildFile(fileName);
+    fprintf(stderr, "[FileAudioInput] Full file path: %s, exists=%d\n", 
+            file.getFullPathName().toRawUTF8(), (int)file.existsAsFile());
     return loadFile(file);
 }
 

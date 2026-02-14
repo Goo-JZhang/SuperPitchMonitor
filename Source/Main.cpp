@@ -13,7 +13,8 @@
 #include "MainComponent.h"
 #include "Utils/PlatformUtils.h"
 #include "Utils/Logger.h"
-#include "Test/AutoTestManager.h"
+#include "Test/TestServer.h"
+#include "Audio/AudioEngine.h"
 
 #include <exception>
 #include <csignal>
@@ -53,7 +54,9 @@ void terminateHandler()
 /**
  * SuperPitchMonitor Application Entry Point
  * 
- * A JUCE-based Android real-time spectrum analysis and pitch detection tool
+ * Unified cross-platform testing architecture:
+ * - Normal mode: GUI with TestServer enabled (for external testing)
+ * - Test mode (-TestMode): Headless, only TestServer + AudioEngine
  */
 
 class SuperPitchMonitorApp : public juce::JUCEApplication
@@ -81,28 +84,56 @@ public:
         fprintf(stderr, "[SPM] initialise() called\n");
         fprintf(stderr, "[SPM] Command line: %s\n", commandLine.toRawUTF8());
         
-        // Initialize logger first (before anything else)
+        // Initialize logger - it will auto-detect project root and use Saved/Logs
+        // If no explicit directory is set, Logger will find project root by looking for CMakeLists.txt
         auto exeDir = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
                           .getParentDirectory();
-        auto logDir = exeDir.getChildFile("build_logs");
+        auto parentDir = exeDir.getParentDirectory();
+        auto grandParentDir = parentDir.getParentDirectory();
+        
+        // Try to find project root (contains CMakeLists.txt)
+        juce::File projectRoot = exeDir;
+        for (int i = 0; i < 5; ++i) {
+            if (projectRoot.getChildFile("CMakeLists.txt").existsAsFile())
+                break;
+            projectRoot = projectRoot.getParentDirectory();
+        }
+        
+        // Use Saved/Logs relative to project root
+        juce::File logDir;
+        if (projectRoot.getChildFile("CMakeLists.txt").existsAsFile())
+            logDir = projectRoot.getChildFile("Saved/Logs");
+        else
+            logDir = exeDir.getChildFile("Saved/Logs");
+        
         spm::FileLogger::getInstance().initialize(logDir);
-        fprintf(stderr, "[SPM] Logger initialized\n");
+        fprintf(stderr, "[SPM] Logger initialized, logs at: %s\n", logDir.getFullPathName().toRawUTF8());
         
-        // Parse command line for auto-test mode
-        autoTestManager_.parseCommandLine(commandLine);
+        // Check for test mode
+        testMode_ = commandLine.contains("-TestMode") || commandLine.contains("--test-mode");
+        testPort_ = 9999; // Default port
         
-        fprintf(stderr, "[SPM] AutoTest mode: %s\n", autoTestManager_.isAutoTestMode() ? "YES" : "NO");
-        
-        if (autoTestManager_.isAutoTestMode())
+        // Parse port if specified: -TestPort 9999
+        if (commandLine.contains("-TestPort"))
         {
-            // Test mode: run without UI
+            auto portStr = commandLine.fromFirstOccurrenceOf("-TestPort", false, false)
+                                     .trimStart().upToFirstOccurrenceOf(" ", false, false);
+            testPort_ = portStr.getIntValue();
+            if (testPort_ <= 0 || testPort_ > 65535)
+                testPort_ = 9999;
+        }
+        
+        fprintf(stderr, "[SPM] Test mode: %s (port: %d)\n", testMode_ ? "YES" : "NO", testPort_);
+        
+        if (testMode_)
+        {
+            // Test mode: run headless with TestServer only
             fprintf(stderr, "[SPM] Starting test mode...\n");
             runTestMode();
-            fprintf(stderr, "[SPM] Test mode initialized\n");
         }
         else
         {
-            // Normal mode: create main window
+            // Normal mode: create main window (TestServer runs inside MainComponent)
             fprintf(stderr, "[SPM] Creating main window...\n");
             mainWindow.reset(new MainWindow(getApplicationName()));
             fprintf(stderr, "[SPM] Main window created\n");
@@ -111,9 +142,9 @@ public:
     
     void runTestMode()
     {
-        fprintf(stderr, "[SPM] runTestMode() - Step 1\n");
+        fprintf(stderr, "[SPM] runTestMode() starting\n");
         
-        // Create audio engine for test mode (headless)
+        // Create audio engine
         fprintf(stderr, "[SPM] Creating AudioEngine...\n");
         audioEngine_ = std::make_unique<spm::AudioEngine>();
         fprintf(stderr, "[SPM] AudioEngine created\n");
@@ -121,54 +152,86 @@ public:
         // Set up callbacks for test mode
         fprintf(stderr, "[SPM] Setting up callbacks...\n");
         audioEngine_->setPitchCallback([this](const spm::PitchVector& pitches) {
-            autoTestManager_.updatePitchResults(pitches);
+            // Update test server with results
+            if (testServer_)
+            {
+                std::vector<spm::TestServer::DetectionResult> results;
+                for (const auto& p : pitches)
+                {
+                    spm::TestServer::DetectionResult r;
+                    r.frequency = p.frequency;
+                    r.midiNote = p.midiNote;
+                    r.confidence = p.confidence;
+                    r.centsDeviation = p.centsDeviation;
+                    r.harmonicCount = p.harmonicCount;
+                    r.timestamp = juce::Time::getCurrentTime().toMilliseconds();
+                    results.push_back(r);
+                }
+                testServer_->updateResults(results);
+                testServer_->incrementFrameCount();
+            }
         });
+        
         audioEngine_->setSpectrumCallback([this](const spm::SpectrumData& data) {
-            autoTestManager_.updateSpectrumData(data);
+            // Spectrum data is processed but not used in basic tests
+            juce::ignoreUnused(data);
         });
         fprintf(stderr, "[SPM] Callbacks set up\n");
         
-        // Start auto test manager
-        fprintf(stderr, "[SPM] Starting AutoTestManager...\n");
-        if (!autoTestManager_.startTestMode(audioEngine_.get(), nullptr))
+        // Create and start TestServer
+        fprintf(stderr, "[SPM] Creating TestServer on port %d...\n", testPort_);
+        testServer_ = std::make_unique<spm::TestServer>();
+        testServer_->setAudioEngine(audioEngine_.get());
+        testServer_->setMainComponent(nullptr); // No GUI in test mode
+        
+        if (!testServer_->start(testPort_))
         {
-            fprintf(stderr, "[SPM] Failed to start AutoTestManager!\n");
+            fprintf(stderr, "[SPM] Failed to start TestServer on port %d!\n", testPort_);
+            quit();
             return;
         }
-        fprintf(stderr, "[SPM] AutoTestManager started\n");
+        fprintf(stderr, "[SPM] TestServer started successfully on port %d\n", testPort_);
         
-        // Just use a simple timer to check exit condition
-        fprintf(stderr, "[SPM] Starting exit check timer...\n");
-        juce::Timer::callAfterDelay(100, [this]() { checkTestExit(); });
-        fprintf(stderr, "[SPM] Test mode setup complete\n");
-    }
-    
-    void checkTestExit()
-    {
-        if (autoTestManager_.shouldExit())
-        {
-            fprintf(stderr, "[SPM] Exit requested, quitting...\n");
-            systemRequestedQuit();
-        }
-        else
-        {
-            // Check again in 100ms
-            juce::Timer::callAfterDelay(100, [this]() { checkTestExit(); });
-        }
+        // Keep the app running - TestServer runs in its own thread
+        fprintf(stderr, "[SPM] Test mode ready. Waiting for test commands...\n");
     }
 
     void shutdown() override
     {
+        fprintf(stderr, "[SPM] shutdown() called\n");
+        
+        // Stop test server
+        if (testServer_)
+        {
+            fprintf(stderr, "[SPM] Stopping TestServer...\n");
+            testServer_->stop();
+            testServer_.reset();
+        }
+        
+        // Stop audio engine
+        if (audioEngine_)
+        {
+            fprintf(stderr, "[SPM] Stopping AudioEngine...\n");
+            if (audioEngine_->isRunning())
+            {
+                audioEngine_->stop();
+            }
+            audioEngine_.reset();
+        }
+        
         mainWindow = nullptr;
+        fprintf(stderr, "[SPM] shutdown() complete\n");
     }
 
     void systemRequestedQuit() override
     {
+        fprintf(stderr, "[SPM] systemRequestedQuit() called\n");
         quit();
     }
 
     void anotherInstanceStarted(const juce::String& commandLine) override
     {
+        juce::ignoreUnused(commandLine);
         // Bring current window to front when another instance starts
         if (mainWindow != nullptr)
         {
@@ -177,7 +240,7 @@ public:
     }
 
     /**
-     * Main Application Window
+     * Main Application Window (Normal Mode)
      */
     class MainWindow : public juce::DocumentWindow
     {
@@ -190,7 +253,7 @@ public:
         {
             setUsingNativeTitleBar(true);
             
-            // Create main component
+            // Create main component (which includes TestServer)
             auto* mainComponent = new spm::MainComponent();
             setContentOwned(mainComponent, true);
             
@@ -212,8 +275,10 @@ public:
 
 private:
     std::unique_ptr<MainWindow> mainWindow;
-    spm::AutoTestManager autoTestManager_;
+    std::unique_ptr<spm::TestServer> testServer_;
     std::unique_ptr<spm::AudioEngine> audioEngine_;
+    bool testMode_ = false;
+    int testPort_ = 9999;
 };
 
 //==============================================================================
@@ -232,4 +297,3 @@ struct CrashHandlerInstaller {
 } g_crashHandlerInstaller;
 
 START_JUCE_APPLICATION(SuperPitchMonitorApp)
-

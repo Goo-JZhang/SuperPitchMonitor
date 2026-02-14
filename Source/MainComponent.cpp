@@ -6,23 +6,34 @@ namespace spm {
 
 MainComponent::MainComponent()
 {
-    // Initialize file logger first
-    auto exeDir = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-                      .getParentDirectory();
-    auto logDir = exeDir.getChildFile("build_logs");
-    FileLogger::getInstance().initialize(logDir);
+    // Initialize file logger - it will auto-detect project root and use Saved/Logs
     
     // Install assertion handler for crash logging
     installAssertionHandler();
     
     SPM_LOG_INFO("========================================");
     SPM_LOG_INFO("Application Starting");
-    SPM_LOG_INFO("Executable: " + exeDir.getChildFile("SuperPitchMonitor.exe").getFullPathName());
     SPM_LOG_INFO("[MainComponent] Constructor start");
     
     setupUI();
     setupAudio();
     connectSettingsCallbacks();
+    
+    // Start TCP test server for cross-platform testing
+    fprintf(stderr, "[MainComponent] Starting TestServer on port 9999...\n");
+    testServer_ = std::make_unique<TestServer>();
+    testServer_->setAudioEngine(audioEngine_.get());
+    testServer_->setMainComponent(this);
+    if (testServer_->start(9999))
+    {
+        fprintf(stderr, "[MainComponent] TestServer started successfully on port 9999\n");
+        SPM_LOG_INFO("[MainComponent] TestServer started on port 9999");
+    }
+    else
+    {
+        fprintf(stderr, "[MainComponent] Failed to start TestServer on port 9999\n");
+        SPM_LOG_ERROR("[MainComponent] Failed to start TestServer on port 9999");
+    }
     
     setSize(1400, 900);
     
@@ -47,21 +58,18 @@ MainComponent::MainComponent()
 
 MainComponent::~MainComponent()
 {
-    // Stop auto test manager
-    if (autoTestManager_)
+    // Stop test server
+    if (testServer_)
     {
-        autoTestManager_->stopTestMode();
-        autoTestManager_.reset();
+        testServer_->stop();
+        testServer_.reset();
     }
 }
 
 void MainComponent::timerCallback()
 {
-    // Process pending test commands
-    if (autoTestManager_)
-    {
-        autoTestManager_->processPendingCommands();
-    }
+    // Timer callback - FPS counter and UI updates only
+    // TestServer runs in its own thread
 }
 
 void MainComponent::setupUI()
@@ -265,12 +273,7 @@ void MainComponent::setupAudio()
     
     SPM_LOG_INFO("[MainComponent] setupAudio complete");
     
-    // Setup auto test manager (will only activate if -AutoTest was passed)
-    autoTestManager_ = std::make_unique<AutoTestManager>();
-    if (autoTestManager_->isAutoTestMode())
-    {
-        autoTestManager_->startTestMode(audioEngine_.get(), this);
-    }
+    // TestServer is already started in constructor
     
     // Start timer for processing test commands (100Hz)
     startTimer(10);
@@ -406,12 +409,8 @@ void MainComponent::onSpectrumData(const SpectrumData& data)
                      + " mags[10]=" + juce::String(data.magnitudes.size() > 10 ? data.magnitudes[10] : 0.0f, 4));
     }
     
-    // Update auto test manager with spectrum data
-    if (autoTestManager_)
-    {
-        autoTestManager_->updateSpectrumData(data);
-    }
-    
+    // Spectrum data is used by UI only, TestServer gets data through pitch detection
+
     // Record frame for FPS calculation
     fpsCounter_.recordFrame();
     
@@ -434,11 +433,23 @@ void MainComponent::onSpectrumData(const SpectrumData& data)
 
 void MainComponent::onPitchDetected(const PitchVector& pitches)
 {
-    // Update auto test manager with results
-    if (autoTestManager_)
+    // Update test server with results
+    if (testServer_)
     {
-        autoTestManager_->updatePitchResults(pitches);
-        autoTestManager_->onFrameProcessed();
+        std::vector<TestServer::DetectionResult> results;
+        for (const auto& p : pitches)
+        {
+            TestServer::DetectionResult r;
+            r.frequency = p.frequency;
+            r.midiNote = p.midiNote;
+            r.confidence = p.confidence;
+            r.centsDeviation = p.centsDeviation;
+            r.harmonicCount = p.harmonicCount;
+            r.timestamp = juce::Time::getCurrentTime().toMilliseconds();
+            results.push_back(r);
+        }
+        testServer_->updateResults(results);
+        testServer_->incrementFrameCount();
     }
     
     if (pitches.empty()) return;

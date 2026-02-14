@@ -12,7 +12,7 @@
 #include "UI/PitchDisplay.h"
 #include "UI/SettingsPanel.h"
 #include "Utils/PlatformUtils.h"
-#include "Test/AutoTestManager.h"
+#include "Test/TestServer.h"
 
 namespace spm {
 
@@ -41,8 +41,9 @@ private:
     // Audio engine
     std::unique_ptr<AudioEngine> audioEngine_;
     
-    // Auto test manager for automated testing
-    std::unique_ptr<AutoTestManager> autoTestManager_;
+    // TCP Test server for cross-platform automated testing
+    std::unique_ptr<TestServer> testServer_;
+    int testServerPort_ = 9999;
     
     // UI Components
     std::unique_ptr<PitchWaterfallDisplay> pitchWaterfall_;  // Main display

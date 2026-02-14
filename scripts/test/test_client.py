@@ -1,16 +1,32 @@
 #!/usr/bin/env python3
 """
-SuperPitchMonitor Python Test Client with Ground Truth Validation
+SuperPitchMonitor Unified Test Client (Cross-Platform)
+Supports Windows, macOS, and Linux
+
+Replaces the original Windows-only test client (which used named pipes)
+with a unified TCP socket-based implementation.
 
 Usage:
-    python test_client.py                    # Run all tests
-    python test_client.py --test single_tone # Run specific test category
-    python test_client.py --gui              # Start SPM in GUI mode
-    python test_client.py --validate-only    # Validate ground truth data
+    # Run all tests (auto-detect SPM executable)
+    python test_client.py
     
-Requirements:
-    - Windows (uses named pipes)
-    - pywin32: pip install pywin32
+    # Run specific test category
+    python test_client.py --test single_tone
+    
+    # Use custom SPM executable
+    python test_client.py --exe /path/to/SuperPitchMonitor
+    
+    # Use custom port
+    python test_client.py --port 9999
+    
+    # Keep SPM running after tests (for debugging)
+    python test_client.py --keep-alive
+    
+Architecture:
+    1. Launches SPM in TestMode (headless) with TestServer enabled
+    2. Connects via TCP socket to port 9999 (default)
+    3. Sends JSON commands and receives responses
+    4. Validates results against ground truth
 """
 
 import subprocess
@@ -20,31 +36,66 @@ import struct
 import sys
 import os
 import argparse
-from typing import List, Dict, Any, Tuple
+import socket
+import platform
+import signal
+from typing import List, Dict, Any, Tuple, Optional
+from pathlib import Path
 
-try:
-    import win32file
-    import win32pipe
-    import pywintypes
-except ImportError:
-    print("Error: pywin32 not installed. Run: pip install pywin32")
-    sys.exit(1)
+# Configuration
+DEFAULT_TCP_PORT = 9999
+DEFAULT_WAIT_FRAMES = 60
 
-PIPE_NAME = r'\\.\pipe\SPM_TestPipe'
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-GROUND_TRUTH_FILE = os.path.join(SCRIPT_DIR, 'Resources', 'TestAudio', 'test_ground_truth.json')
+SCRIPT_DIR = Path(__file__).parent.absolute()
+PROJECT_ROOT = SCRIPT_DIR.parent.parent
+TEST_AUDIO_DIR = PROJECT_ROOT / "Resources" / "TestAudio"
+GROUND_TRUTH_FILE = TEST_AUDIO_DIR / "test_ground_truth.json"
+
+
+def find_spm_executable() -> Optional[Path]:
+    """Find SPM executable for current platform"""
+    system = platform.system()
+    
+    # Possible executable names and locations
+    candidates = []
+    
+    if system == "Darwin":  # macOS
+        candidates = [
+            PROJECT_ROOT / "SuperPitchMonitor.app" / "Contents" / "MacOS" / "SuperPitchMonitor",
+            PROJECT_ROOT / "build-macos" / "SuperPitchMonitor.app" / "Contents" / "MacOS" / "SuperPitchMonitor",
+        ]
+    elif system == "Windows":
+        candidates = [
+            PROJECT_ROOT / "SuperPitchMonitor.exe",
+            PROJECT_ROOT / "build-windows" / "SuperPitchMonitor_artefacts" / "SuperPitchMonitor.exe",
+        ]
+    else:  # Linux
+        candidates = [
+            PROJECT_ROOT / "SuperPitchMonitor",
+            PROJECT_ROOT / "build-linux" / "SuperPitchMonitor",
+        ]
+    
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    
+    return None
 
 
 class GroundTruth:
     """Ground truth data manager"""
     
-    def __init__(self, filepath: str):
+    def __init__(self, filepath: Path):
         self.filepath = filepath
         self.data = None
         self.load()
     
     def load(self):
         """Load ground truth data from JSON"""
+        if not self.filepath.exists():
+            print(f"Error: Ground truth file not found: {self.filepath}")
+            sys.exit(1)
+            
         with open(self.filepath, 'r', encoding='utf-8') as f:
             self.data = json.load(f)
         print(f"Loaded ground truth for {len(self.data['files'])} test files")
@@ -56,10 +107,6 @@ class GroundTruth:
     def get_test_categories(self) -> Dict[str, Any]:
         """Get test categories"""
         return self.data.get('test_categories', {})
-    
-    def get_test_scenarios(self) -> Dict[str, Any]:
-        """Get test scenarios"""
-        return self.data.get('test_scenarios', {})
     
     def list_files(self) -> List[str]:
         """List all files with ground truth"""
@@ -126,7 +173,7 @@ class GroundTruth:
                     "tolerance": tolerance
                 })
         
-        # Check for false positives (detected but not expected)
+        # Check for false positives
         for i, det in enumerate(detected_pitches):
             if i in matched_detected:
                 continue
@@ -160,363 +207,298 @@ class GroundTruth:
         # Determine pass/fail
         passed = len(results['missed']) <= 1 and len(results['false_positives']) <= 1
         if truth.get('type') == 'single_tone':
-            passed = len(results['matches']) >= 1  # Single tone must be detected
+            passed = len(results['matches']) >= 1
         
         return passed, results
 
 
 class SPMTestClient:
-    """SuperPitchMonitor test client"""
+    """SuperPitchMonitor TCP test client (cross-platform)"""
     
-    def __init__(self, pipe_name=PIPE_NAME):
-        self.pipe_name = pipe_name
-        self.pipe = None
+    def __init__(self, host: str = "127.0.0.1", port: int = DEFAULT_TCP_PORT):
+        self.host = host
+        self.port = port
+        self.socket: Optional[socket.socket] = None
         self.ground_truth = GroundTruth(GROUND_TRUTH_FILE)
-        
-    def connect(self, timeout=30):
-        """Connect to SPM test pipe"""
-        print(f"Connecting to {self.pipe_name}...")
+    
+    def connect(self, timeout: int = 30) -> bool:
+        """Connect to SPM test server via TCP"""
+        print(f"Connecting to {self.host}:{self.port}...")
         start = time.time()
         
         while time.time() - start < timeout:
             try:
-                self.pipe = win32file.CreateFile(
-                    self.pipe_name,
-                    win32file.GENERIC_READ | win32file.GENERIC_WRITE,
-                    0, None,
-                    win32file.OPEN_EXISTING,
-                    0, None
-                )
-                win32pipe.SetNamedPipeHandleState(self.pipe, win32pipe.PIPE_READMODE_MESSAGE, None, None)
+                self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.socket.settimeout(5)
+                self.socket.connect((self.host, self.port))
+                self.socket.settimeout(None)
                 print("Connected!")
                 return True
-            except pywintypes.error as e:
-                if e.winerror == 2:  # ERROR_FILE_NOT_FOUND
-                    time.sleep(0.5)
-                    continue
-                raise
+            except (socket.error, ConnectionRefusedError):
+                if self.socket:
+                    self.socket.close()
+                    self.socket = None
+                time.sleep(0.5)
         
         print("Connection timeout!")
         return False
     
     def disconnect(self):
-        if self.pipe:
-            win32file.CloseHandle(self.pipe)
-            self.pipe = None
+        """Disconnect from server"""
+        if self.socket:
+            try:
+                self.socket.close()
+            except:
+                pass
+            self.socket = None
     
-    def send_command(self, cmd_dict):
+    def send_command(self, cmd_dict: Dict) -> Dict:
         """Send command and receive response"""
-        if not self.pipe:
+        if not self.socket:
             raise RuntimeError("Not connected")
         
         json_data = json.dumps(cmd_dict).encode('utf-8')
         length = len(json_data)
         
-        win32file.WriteFile(self.pipe, struct.pack('>I', length))
-        win32file.WriteFile(self.pipe, json_data)
+        # Send length (4 bytes, big-endian)
+        self.socket.sendall(struct.pack('>I', length))
+        # Send data
+        self.socket.sendall(json_data)
         
-        data = win32file.ReadFile(self.pipe, 4)
-        resp_len = struct.unpack('>I', data[1])[0]
+        # Receive response length
+        resp_len_bytes = self._recv_all(4)
+        resp_len = struct.unpack('>I', resp_len_bytes)[0]
         
-        resp_data = b''
-        while len(resp_data) < resp_len:
-            chunk = win32file.ReadFile(self.pipe, resp_len - len(resp_data))
-            resp_data += chunk[1]
+        # Receive response data
+        resp_data = self._recv_all(resp_len)
         
         return json.loads(resp_data.decode('utf-8'))
     
+    def _recv_all(self, n: int) -> bytes:
+        """Receive exactly n bytes"""
+        data = b''
+        while len(data) < n:
+            chunk = self.socket.recv(n - len(data))
+            if not chunk:
+                raise RuntimeError("Connection closed unexpectedly")
+            data += chunk
+        return data
+    
     # Convenience methods
-    def get_status(self):
+    def get_status(self) -> Dict:
         return self.send_command({"cmd": "getStatus"})
     
-    def set_multi_res(self, enabled):
+    def set_multi_res(self, enabled: bool) -> Dict:
         return self.send_command({"cmd": "setMultiRes", "enabled": enabled})
     
-    def load_file(self, filename):
-        # Ensure file exists in test directory
-        test_dir = os.path.join(SCRIPT_DIR, 'Resources', 'TestAudio')
-        full_path = os.path.join(test_dir, filename)
-        if os.path.exists(full_path):
-            # Send just the filename - SPM will resolve path
-            return self.send_command({"cmd": "loadFile", "filename": filename})
-        else:
-            return {"status": "error", "message": f"File not found: {full_path}"}
+    def load_file(self, filename: str) -> Dict:
+        return self.send_command({"cmd": "loadFile", "filename": filename})
     
-    def start(self):
-        return self.send_command({"cmd": "start"})
+    def start(self) -> Dict:
+        return self.send_command({"cmd": "startPlayback"})
     
-    def stop(self):
-        return self.send_command({"cmd": "stop"})
+    def stop(self) -> Dict:
+        return self.send_command({"cmd": "stopPlayback"})
     
-    def get_pitches(self):
+    def get_pitches(self) -> Dict:
         return self.send_command({"cmd": "getPitches"})
     
-    def get_spectrum_peaks(self, freq_min=50, freq_max=2000):
-        return self.send_command({
-            "cmd": "getSpectrumPeaks",
-            "freqMin": freq_min,
-            "freqMax": freq_max
-        })
+    def wait_frames(self, count: int, timeout_ms: int = 5000) -> Dict:
+        return self.send_command({"cmd": "waitForFrames", "count": count})
     
-    def wait_frames(self, count, timeout=5000):
-        return self.send_command({"cmd": "wait", "frames": count, "timeout": timeout})
+    def get_spectrum_peaks(self, freq_min: float = 50, freq_max: float = 5000) -> Dict:
+        return self.send_command({"cmd": "getSpectrumPeaks", "freqMin": freq_min, "freqMax": freq_max})
     
-    def exit(self):
-        return self.send_command({"cmd": "exit"})
-    
-    def test_file(self, filename: str, multi_res: bool = False, 
-                  warmup_frames: int = 60, test_frames: int = 60) -> Tuple[bool, Dict]:
-        """
-        Test a single file against ground truth
-        
-        Returns: (passed, details)
-        """
+    def run_test_file(self, filename: str, multi_res: bool = True, 
+                      wait_frames: int = DEFAULT_WAIT_FRAMES) -> Tuple[bool, Dict]:
+        """Run a complete test on a single file"""
         print(f"\n{'='*60}")
         print(f"Testing: {filename}")
         print(f"Multi-resolution: {'ON' if multi_res else 'OFF'}")
         print(f"{'='*60}")
         
-        truth = self.ground_truth.get_file_truth(filename)
-        if not truth:
-            print(f"ERROR: No ground truth for {filename}")
-            return False, {"error": "No ground truth"}
-        
-        print(f"Description: {truth.get('description', 'N/A')}")
-        print(f"Type: {truth.get('type', 'unknown')}")
-        print(f"Expected fundamentals: {[f['note'] for f in truth.get('fundamentals', [])]}")
-        
-        # Configure and start
+        # Set multi-res mode
         self.set_multi_res(multi_res)
         
-        if not self.load_file(filename).get('status') == 'ok':
-            print(f"ERROR: Failed to load {filename}")
+        # Load file
+        result = self.load_file(filename)
+        if result.get('status') != 'ok':
+            print(f"Failed to load file: {result}")
             return False, {"error": "Failed to load file"}
+        print(f"Loaded: {filename}")
         
+        # Start playback
         self.start()
+        print("Playback started")
         
-        # Warmup
-        print(f"\nWarming up ({warmup_frames} frames)...")
-        self.wait_frames(warmup_frames)
+        # Wait for analysis
+        print(f"Waiting for {wait_frames} frames...")
+        self.wait_frames(wait_frames)
         
-        # Collect results
-        print(f"Collecting data ({test_frames} frames)...")
-        all_pitches = []
-        for _ in range(5):  # Sample 5 times
-            result = self.get_pitches()
-            pitches = result.get('pitches', [])
-            all_pitches.extend(pitches)
-            self.wait_frames(test_frames // 5)
+        # Get results
+        pitches_result = self.get_pitches()
+        detected = pitches_result.get('pitches', [])
         
+        # Stop playback
         self.stop()
-        
-        # Merge duplicate detections (same frequency)
-        merged = {}
-        for p in all_pitches:
-            freq = p['frequency']
-            # Group by approximate frequency (within 5Hz)
-            key = round(freq / 5) * 5
-            if key not in merged:
-                merged[key] = []
-            merged[key].append(p)
-        
-        # Average duplicates
-        unique_pitches = []
-        for key, group in merged.items():
-            avg_pitch = {
-                'frequency': sum(p['frequency'] for p in group) / len(group),
-                'midiNote': sum(p['midiNote'] for p in group) / len(group),
-                'confidence': max(p['confidence'] for p in group),
-                'harmonicCount': max(p['harmonicCount'] for p in group),
-                'centsDeviation': sum(p['centsDeviation'] for p in group) / len(group)
-            }
-            unique_pitches.append(avg_pitch)
+        print("Playback stopped")
         
         # Validate against ground truth
         passed, details = self.ground_truth.validate_detection(
-            filename, unique_pitches, 
-            "multi_res" if multi_res else "standard"
+            filename, detected, 
+            mode="multi_res" if multi_res else "single_res"
         )
         
         # Print results
-        print(f"\nDetected {len(unique_pitches)} unique pitches:")
-        for p in sorted(unique_pitches, key=lambda x: x['frequency']):
-            print(f"  {p['frequency']:7.1f} Hz | midi: {p['midiNote']:.1f} | conf: {p['confidence']:.2f} | H: {p['harmonicCount']}")
-        
-        print(f"\nValidation Results:")
-        print(f"  Matches: {len(details['matches'])}/{details['total_expected']}")
+        print(f"\nResults:")
+        print(f"  Expected: {details['total_expected']}")
+        print(f"  Detected: {details['total_detected']}")
+        print(f"  Matches: {len(details['matches'])}")
         print(f"  Missed: {len(details['missed'])}")
-        print(f"  False positives: {len(details['false_positives'])}")
-        if 'score' in details:
-            print(f"  F1 Score: {details['score']:.2f}")
+        print(f"  False Positives: {len(details['false_positives'])}")
+        print(f"  Score: {details['score']:.2%}")
+        print(f"  Status: {'PASS' if passed else 'FAIL'}")
         
-        if details['missed']:
-            print(f"  Missed fundamentals:")
-            for m in details['missed']:
-                print(f"    - {m['note']} ({m['freq']:.1f} Hz)")
-        
-        if details['false_positives']:
-            print(f"  False positives:")
-            for fp in details['false_positives']:
-                print(f"    - {fp['freq']:.1f} Hz (conf: {fp['confidence']:.2f})")
-        
-        print(f"\nResult: {'PASS' if passed else 'FAIL'}")
+        if details['matches']:
+            print(f"\n  Matched pitches:")
+            for m in details['matches']:
+                print(f"    {m['expected']['note']}: {m['detected']['freq']:.1f} Hz "
+                      f"(expected {m['expected']['freq']:.1f} Hz, "
+                      f"error {m['error_hz']:+.1f} Hz)")
         
         return passed, details
 
 
-def find_spm_exe():
-    """Find SPM executable"""
-    possible_paths = [
-        r"build-windows\SuperPitchMonitor_artefacts\Debug\SuperPitchMonitor.exe",
-        r"build-windows\SuperPitchMonitor_artefacts\Release\SuperPitchMonitor.exe",
-    ]
+def run_all_tests(args) -> int:
+    """Run all tests"""
+    client = SPMTestClient(port=args.port)
     
-    for path in possible_paths:
-        full = os.path.join(SCRIPT_DIR, path)
-        if os.path.exists(full):
-            return os.path.abspath(full)
+    # Connect to server
+    if not client.connect(timeout=args.timeout):
+        print("Failed to connect to SPM. Is it running?")
+        return 1
     
-    return None
-
-
-def run_category_test(client: SPMTestClient, category: str, ground_truth: GroundTruth):
-    """Run tests for a specific category"""
-    categories = ground_truth.get_test_categories()
-    if category not in categories:
-        print(f"Unknown category: {category}")
-        print(f"Available: {list(categories.keys())}")
-        return False
-    
-    cat_data = categories[category]
-    files = cat_data.get('files', [])
-    
-    print(f"\n{'#'*70}")
-    print(f"Category: {category}")
-    print(f"Description: {cat_data.get('description', '')}")
-    print(f"Files: {len(files)}")
-    print(f"{'#'*70}")
-    
-    results = []
-    
-    # Test each file in both modes
-    for filename in files:
-        # Standard mode
-        passed_std, details_std = client.test_file(filename, multi_res=False)
-        results.append({
-            'file': filename,
-            'mode': 'standard',
-            'passed': passed_std,
-            'details': details_std
-        })
+    try:
+        # Get list of test files
+        files = client.ground_truth.list_files()
+        if args.test:
+            files = [f for f in files if args.test in f]
         
-        # Multi-res mode
-        passed_mr, details_mr = client.test_file(filename, multi_res=True)
-        results.append({
-            'file': filename,
-            'mode': 'multi_res',
-            'passed': passed_mr,
-            'details': details_mr
-        })
+        results = []
+        
+        # Run tests with multi-resolution ON
+        print("\n" + "="*60)
+        print("TESTING WITH MULTI-RESOLUTION ON")
+        print("="*60)
+        
+        for filename in files:
+            passed, details = client.run_test_file(filename, multi_res=True, 
+                                                   wait_frames=args.wait_frames)
+            results.append({
+                "file": filename,
+                "multi_res": True,
+                "passed": passed,
+                "details": details
+            })
+        
+        # Print summary
+        print("\n" + "="*60)
+        print("TEST SUMMARY")
+        print("="*60)
+        
+        passed_count = sum(1 for r in results if r['passed'])
+        total_count = len(results)
+        
+        for r in results:
+            status = "PASS" if r['passed'] else "FAIL"
+            score = r['details'].get('score', 0)
+            print(f"  [{status}] {r['file']}: {score:.1%}")
+        
+        print(f"\nTotal: {passed_count}/{total_count} passed ({passed_count/total_count*100:.1f}%)")
+        
+        return 0 if passed_count == total_count else 1
     
-    # Summary
-    print(f"\n{'='*70}")
-    print(f"CATEGORY SUMMARY: {category}")
-    print(f"{'='*70}")
-    
-    for r in results:
-        status = "PASS" if r['passed'] else "FAIL"
-        score = r['details'].get('score', 0)
-        print(f"  [{status}] {r['file']} ({r['mode']}) - F1: {score:.2f}")
-    
-    all_passed = all(r['passed'] for r in results)
-    print(f"\nOverall: {'PASS' if all_passed else 'FAIL'}")
-    
-    return all_passed
+    finally:
+        client.disconnect()
 
 
 def main():
-    parser = argparse.ArgumentParser(description='SuperPitchMonitor Test Client')
-    parser.add_argument('--gui', action='store_true', help='Start SPM in GUI mode')
-    parser.add_argument('--test', type=str, help='Test category to run (single_tone, simple_chord, etc.)')
-    parser.add_argument('--file', type=str, help='Test specific file')
-    parser.add_argument('--validate-only', action='store_true', help='Validate ground truth data')
-    parser.add_argument('--list-files', action='store_true', help='List all test files')
+    parser = argparse.ArgumentParser(
+        description="SuperPitchMonitor Unified Test Client (Cross-Platform)"
+    )
+    parser.add_argument("--port", type=int, default=DEFAULT_TCP_PORT,
+                       help=f"TCP port (default: {DEFAULT_TCP_PORT})")
+    parser.add_argument("--test", type=str, default=None,
+                       help="Run specific test (e.g., 'single_tone', 'chord')")
+    parser.add_argument("--timeout", type=int, default=30,
+                       help="Connection timeout in seconds (default: 30)")
+    parser.add_argument("--wait-frames", type=int, default=DEFAULT_WAIT_FRAMES,
+                       help=f"Frames to wait for analysis (default: {DEFAULT_WAIT_FRAMES})")
+    parser.add_argument("--exe", type=str, default=None,
+                       help="Path to SPM executable (auto-detect if not specified)")
+    parser.add_argument("--keep-alive", action="store_true",
+                       help="Keep SPM running after tests (for debugging)")
+    parser.add_argument("--no-launch", action="store_true",
+                       help="Don't launch SPM (assume it's already running)")
+    
     args = parser.parse_args()
     
-    # Load ground truth
-    ground_truth = GroundTruth(GROUND_TRUTH_FILE)
-    
-    if args.list_files:
-        print("Available test files:")
-        for f in ground_truth.list_files():
-            truth = ground_truth.get_file_truth(f)
-            print(f"  - {f}: {truth.get('description', 'N/A')}")
-        return
-    
-    if args.validate_only:
-        print("Ground truth validation:")
-        print(f"  Total files: {len(ground_truth.list_files())}")
-        print(f"  Categories: {list(ground_truth.get_test_categories().keys())}")
-        print(f"  Scenarios: {list(ground_truth.get_test_scenarios().keys())}")
-        return
-    
-    if args.gui:
-        exe = find_spm_exe()
-        if exe:
-            print(f"Starting SPM in GUI mode: {exe}")
-            subprocess.run([exe])
-        else:
-            print("Error: SuperPitchMonitor.exe not found!")
-        return
-    
-    # Run automated tests
-    exe = find_spm_exe()
-    if not exe:
-        print("Error: SuperPitchMonitor.exe not found!")
-        sys.exit(1)
-    
-    print(f"SPM Executable: {exe}")
-    print("Starting SPM in AutoTest mode...")
-    
-    proc = subprocess.Popen(
-        [exe, "-AutoTest"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        cwd=os.path.dirname(exe)
-    )
+    spm_process = None
     
     try:
-        time.sleep(2)  # Wait for SPM to start
-        
-        client = SPMTestClient()
-        if not client.connect(timeout=30):
-            print("Failed to connect to SPM!")
-            sys.exit(1)
+        if not args.no_launch:
+            # Find SPM executable
+            exe_path = args.exe
+            if exe_path:
+                exe_path = Path(exe_path)
+            else:
+                exe_path = find_spm_executable()
+            
+            if not exe_path or not exe_path.exists():
+                print("Error: SPM executable not found")
+                print("Use --exe to specify the path to SuperPitchMonitor executable")
+                return 1
+            
+            print(f"SPM executable: {exe_path}")
+            
+            # Launch SPM in test mode (from project root so it can find Resources)
+            cmd = [str(exe_path), "-TestMode", "-TestPort", str(args.port)]
+            print(f"Launching SPM in test mode: {' '.join(cmd)}")
+            print(f"Working directory: {PROJECT_ROOT}")
+            
+            if platform.system() == "Windows":
+                spm_process = subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP, cwd=PROJECT_ROOT)
+            else:
+                spm_process = subprocess.Popen(cmd, cwd=PROJECT_ROOT)
+            
+            # Wait for SPM to start
+            print("Waiting for SPM to start...")
+            time.sleep(3)
         
         # Run tests
-        if args.file:
-            passed, _ = client.test_file(args.file, multi_res=False)
-            passed_mr, _ = client.test_file(args.file, multi_res=True)
-            all_passed = passed and passed_mr
-        elif args.test:
-            all_passed = run_category_test(client, args.test, ground_truth)
-        else:
-            # Run all categories
-            categories = ['single_tone', 'single_note', 'simple_chord']
-            results = []
-            for cat in categories:
-                results.append(run_category_test(client, cat, ground_truth))
-            all_passed = all(results)
+        result = run_all_tests(args)
         
-        client.exit()
-        client.disconnect()
+        if args.keep_alive and spm_process:
+            print("\nKeeping SPM running (press Ctrl+C to stop)...")
+            try:
+                spm_process.wait()
+            except KeyboardInterrupt:
+                print("\nStopping SPM...")
         
-        sys.exit(0 if all_passed else 1)
-        
+        return result
+    
     finally:
-        proc.terminate()
-        proc.wait()
+        if spm_process and not args.keep_alive:
+            print("\nStopping SPM...")
+            try:
+                if platform.system() == "Windows":
+                    spm_process.send_signal(signal.CTRL_BREAK_EVENT)
+                else:
+                    spm_process.terminate()
+                spm_process.wait(timeout=5)
+            except:
+                spm_process.kill()
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    sys.exit(main())

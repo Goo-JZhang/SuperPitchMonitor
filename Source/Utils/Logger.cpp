@@ -509,6 +509,7 @@ void FileLogger::installTerminateHandler()
     });
 }
 
+#ifdef _WIN32
 void FileLogger::installPureCallHandler()
 {
     _set_purecall_handler([]() {
@@ -542,6 +543,7 @@ void FileLogger::installInvalidParameterHandler()
         abort();
     });
 }
+#endif // _WIN32
 
 void FileLogger::terminateHandler()
 {

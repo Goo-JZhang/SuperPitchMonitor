@@ -193,16 +193,11 @@ juce::String TestServer::handleGetStatus()
 
 juce::String TestServer::handleSetMultiRes(bool enabled)
 {
-    if (mainComponent_)
+    if (audioEngine_)
     {
-        // Use MessageManager to execute on main thread
-        juce::MessageManager::callAsync([this, enabled]() {
-            if (audioEngine_)
-            {
-                audioEngine_->setMultiResolutionEnabled(enabled);
-                SPM_LOG_INFO("[TestServer] Multi-resolution set to: " + juce::String(enabled ? "ON" : "OFF"));
-            }
-        });
+        // Direct call - AudioEngine::setMultiResolutionEnabled is thread-safe
+        audioEngine_->setMultiResolutionEnabled(enabled);
+        SPM_LOG_INFO("[TestServer] Multi-resolution set to: " + juce::String(enabled ? "ON" : "OFF"));
     }
     
     juce::DynamicObject::Ptr obj = new juce::DynamicObject();
@@ -213,6 +208,8 @@ juce::String TestServer::handleSetMultiRes(bool enabled)
 
 juce::String TestServer::handleLoadFile(const juce::String& filename)
 {
+    fprintf(stderr, "[TestServer] handleLoadFile called: %s, audioEngine=%p\n", 
+            filename.toRawUTF8(), (void*)audioEngine_);
     bool success = false;
     
     if (audioEngine_)
@@ -224,6 +221,14 @@ juce::String TestServer::handleLoadFile(const juce::String& filename)
             success = true;
             SPM_LOG_INFO("[TestServer] Loaded file: " + filename);
         }
+        else
+        {
+            fprintf(stderr, "[TestServer] loadTestFile failed\n");
+        }
+    }
+    else
+    {
+        fprintf(stderr, "[TestServer] audioEngine is null\n");
     }
     
     juce::DynamicObject::Ptr obj = new juce::DynamicObject();
@@ -236,17 +241,16 @@ juce::String TestServer::handleStartPlayback()
 {
     bool success = false;
     
-    juce::MessageManager::callAsync([this, &success]() {
-        if (audioEngine_ && !audioEngine_->isRunning())
+    if (audioEngine_)
+    {
+        // Direct call - check and start audio engine
+        if (!audioEngine_->isRunning())
         {
             audioEngine_->start();
-            success = true;
-            SPM_LOG_INFO("[TestServer] Playback started");
         }
-    });
-    
-    // Wait a bit for the operation to complete
-    juce::Thread::sleep(100);
+        success = true;
+        SPM_LOG_INFO("[TestServer] Playback started");
+    }
     
     juce::DynamicObject::Ptr obj = new juce::DynamicObject();
     obj->setProperty("status", success ? "ok" : "error");

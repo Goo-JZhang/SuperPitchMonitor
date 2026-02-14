@@ -119,9 +119,6 @@ target_sources(SuperPitchMonitor PRIVATE
     Source/Utils/PerformanceMonitor.h
     Source/Utils/PlatformUtils.cpp
     Source/Utils/PlatformUtils.h
-    Source/Utils/PlatformUtils_Windows.cpp
-    Source/Utils/PlatformUtils_Android.cpp
-    Source/Utils/PlatformUtils_iOS.mm
     
     # Debug
     Source/Debug/AudioSimulator.cpp
@@ -130,9 +127,27 @@ target_sources(SuperPitchMonitor PRIVATE
     Source/Debug/DebugControlPanel.h
     
     # Test
-    Source/Test/AutoTestManager.cpp
-    Source/Test/AutoTestManager.h
+    Source/Test/TestServer.cpp
+    Source/Test/TestServer.h
 )
+
+#==============================================================================
+# Platform-specific Source Files
+#==============================================================================
+
+if(WIN32)
+    target_sources(SuperPitchMonitor PRIVATE
+        Source/Utils/PlatformUtils_Windows.cpp
+    )
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Android")
+    target_sources(SuperPitchMonitor PRIVATE
+        Source/Utils/PlatformUtils_Android.cpp
+    )
+elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_sources(SuperPitchMonitor PRIVATE
+        Source/Utils/PlatformUtils_iOS.mm
+    )
+endif()
 
 #==============================================================================
 # JUCE Modules
@@ -208,11 +223,28 @@ if(APPLE)
     endif()
     
     # Framework dependencies for iOS/macOS
-    target_link_libraries(SuperPitchMonitor PRIVATE
-        "-framework Foundation"
-        "-framework UIKit"
-        "-framework CoreGraphics"
-    )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+        # macOS frameworks
+        target_link_libraries(SuperPitchMonitor PRIVATE
+            "-framework Foundation"
+            "-framework AppKit"
+            "-framework CoreGraphics"
+            "-framework CoreAudio"
+            "-framework CoreMidi"
+            "-framework AudioToolbox"
+            "-framework AudioUnit"
+            "-framework Accelerate"
+            "-framework Cocoa"
+            "-framework IOKit"
+        )
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        # iOS frameworks
+        target_link_libraries(SuperPitchMonitor PRIVATE
+            "-framework Foundation"
+            "-framework UIKit"
+            "-framework CoreGraphics"
+        )
+    endif()
 endif()
 
 # Debug/Release definitions
@@ -244,11 +276,20 @@ endif()
 # Binary Output
 #==============================================================================
 
+# All platforms: output to project root for easy access
 set_target_properties(SuperPitchMonitor PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/SuperPitchMonitor_artefacts"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/SuperPitchMonitor_artefacts"
-    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/SuperPitchMonitor_artefacts"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
 )
+
+# macOS: also set bundle output to project root
+if(APPLE)
+    set_target_properties(SuperPitchMonitor PROPERTIES
+        MACOSX_BUNDLE_BUNDLE_NAME "SuperPitchMonitor"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.superpitchmonitor.app"
+    )
+endif()
 
 #==============================================================================
 # Installation
@@ -258,4 +299,5 @@ install(TARGETS SuperPitchMonitor
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
+    BUNDLE DESTINATION Applications
 )

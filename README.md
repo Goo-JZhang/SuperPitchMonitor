@@ -168,29 +168,69 @@ SuperPitchMonitor/
 
 ## Testing
 
-### Automated Testing
+### Automated Testing (Cross-Platform)
 
-The project includes a comprehensive Python test framework:
+The project uses a unified TCP-based testing framework that works on Windows, macOS, and Linux.
 
 ```bash
 # Generate test audio (if not already done)
 python scripts/audio/generate_all_tests.py
 
-# Run detailed analysis with FFT comparison
-python scripts/test/test_detailed_analysis.py --file chord_c_major_7_piano.wav
-
 # Run all tests
-python scripts/test/test_detailed_analysis.py --all
+python scripts/test/test_client.py
+
+# Run specific test category
+python scripts/test/test_client.py --test single_tone
+
+# Run with custom parameters
+python scripts/test/test_client.py --test sine_440 --wait-frames 100
 ```
 
-Test reports are saved to `Docs/test_reports/`.
+### Test Framework Architecture
+
+**TestServer (C++ side)**
+- Runs inside the application (both GUI and headless modes)
+- Listens on TCP port 9999 (configurable)
+- Commands: `getStatus`, `setMultiRes`, `loadFile`, `startPlayback`, `stopPlayback`, `getPitches`, `waitForFrames`
+
+**TestClient (Python side)**
+- Cross-platform: works on Windows, macOS, Linux
+- Communicates via TCP socket (no platform-specific dependencies)
+- Validates results against ground truth data
+
+### Test Modes
+
+**Normal Mode** (GUI with TestServer enabled):
+```bash
+# Windows
+./SuperPitchMonitor.exe
+
+# macOS
+./SuperPitchMonitor.app/Contents/MacOS/SuperPitchMonitor
+
+# Linux
+./SuperPitchMonitor
+```
+
+**Test Mode** (Headless, TestServer only):
+```bash
+# Windows
+./SuperPitchMonitor.exe -TestMode -TestPort 9999
+
+# macOS
+./SuperPitchMonitor.app/Contents/MacOS/SuperPitchMonitor -TestMode -TestPort 9999
+
+# Linux
+./SuperPitchMonitor -TestMode -TestPort 9999
+```
 
 ### Test Framework Features
 
-- **High-precision FFT**: 10-second window, 0.1Hz resolution
-- **Per-frame SPM analysis**: Frequency, confidence, amplitude statistics
-- **Multi-resolution comparison**: Tests both MR-ON and MR-OFF modes
-- **Detailed HTML reports**: Per-file comparison tables
+- **Cross-platform**: Single Python test script works on all platforms
+- **TCP-based communication**: No platform-specific dependencies (replaces Windows named pipes)
+- **Ground truth validation**: Compares detected pitches against FFT-calculated reference data
+- **Per-frame analysis**: Frequency, confidence, amplitude statistics
+- **Multi-resolution testing**: Tests both MR-ON and MR-OFF modes
 
 ## Key Algorithms
 
@@ -221,6 +261,33 @@ If you need to use this software in a closed-source commercial product, you must
 2. Contact the author for a commercial license to this software
 
 ## Development Notes
+
+### Recent Architecture Changes
+
+#### Testing Framework (v2.0)
+
+The testing framework has been unified to support all platforms:
+
+**Before (Windows only):**
+- Named pipes (`\\.\pipe\SPM_TestPipe`)
+- Required `pywin32` dependency
+- `-AutoTest` command line parameter
+
+**After (Cross-platform):**
+- TCP sockets (`127.0.0.1:9999`)
+- Pure Python standard library
+- `-TestMode` command line parameter
+
+**Migration:**
+```bash
+# Old way (Windows)
+python scripts/test/test_client_with_fft.py --file sine_440hz.wav
+
+# New way (All platforms)
+python scripts/test/test_client.py --test sine_440
+```
+
+See [Test Framework Documentation](Docs/06_Development/Test_Framework_Architecture.md) for details.
 
 ### Cross-platform Considerations
 
@@ -261,7 +328,7 @@ git push origin main
 
 | Directory/File | Purpose | Persistence |
 |----------------|---------|-------------|
-| `SuperPitchMonitor.exe` | Main executable (Debug or Release) | ❌ Rebuilt on each compile |
+| `SuperPitchMonitor` / `SuperPitchMonitor.exe` / `SuperPitchMonitor.app` | Main executable | ❌ Rebuilt on each compile |
 | `ThirdParty/` | External dependencies (JUCE, etc.) | ✅ Persistent |
 | `Saved/Logs/` | Application runtime logs | ✅ Persistent |
 | `build-*/` | Build intermediates and logs | ❌ Can be deleted |
@@ -274,9 +341,28 @@ git push origin main
 
 ### Executable Output
 
-The compiled executable `SuperPitchMonitor.exe` is placed directly in the project root directory for easy access:
-- Debug build: `SuperPitchMonitor.exe` (with debug symbols)
-- Release build: `SuperPitchMonitor.exe` (optimized)
+The compiled executable is placed directly in the project root directory for easy access:
+
+**Windows:**
+- `SuperPitchMonitor.exe` - Main executable
+
+**macOS:**
+- `SuperPitchMonitor.app/` - macOS app bundle (run with `open SuperPitchMonitor.app` or `./SuperPitchMonitor.app/Contents/MacOS/SuperPitchMonitor`)
+
+**Linux:**
+- `SuperPitchMonitor` - Main executable
+
+### Test Mode vs Normal Mode
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| Normal Mode | Full GUI with TestServer enabled | Interactive use and development |
+| Test Mode | Headless, TestServer only | Automated testing via Python scripts |
+
+**Start in Test Mode:**
+```bash
+./SuperPitchMonitor -TestMode -TestPort 9999
+```
 
 ## Troubleshooting
 

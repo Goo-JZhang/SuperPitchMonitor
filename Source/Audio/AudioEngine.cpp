@@ -169,10 +169,14 @@ void AudioEngine::setInputSource(std::shared_ptr<AudioInputSource> source)
             this->processAudioBlock(buffer);
         });
         
-        inputSource_->setLevelCallback([this](float level) {
-            if (inputLevelCallback_)
-                inputLevelCallback_(level);
-        });
+        // Only set level callback if we have one (avoid GUI updates from non-GUI threads)
+        if (inputLevelCallback_)
+        {
+            inputSource_->setLevelCallback([this](float level) {
+                if (inputLevelCallback_)
+                    inputLevelCallback_(level);
+            });
+        }
         
        #if defined(DEBUG) || defined(_DEBUG)
         DBG("[AudioEngine] Input source set: " << inputSource_->getName());
@@ -505,14 +509,14 @@ void AudioEngine::setMultiResolutionEnabled(bool enabled)
 {
     useMultiResolution_ = enabled;
     
-    if (enabled && multiResAnalyzer_)
+    if (enabled && multiResAnalyzer_ && polyphonicDetector_)
     {
         // 启用多分辨率模式时重新准备
         multiResAnalyzer_->prepare(sampleRate_);
         polyphonicDetector_->setMultiResolutionEnabled(true);
         SPM_LOG_INFO("[AudioEngine] Multi-resolution analysis enabled");
     }
-    else
+    else if (polyphonicDetector_)
     {
         polyphonicDetector_->setMultiResolutionEnabled(false);
         SPM_LOG_INFO("[AudioEngine] Multi-resolution analysis disabled");
