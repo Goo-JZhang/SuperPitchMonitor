@@ -1,0 +1,183 @@
+{
+  "description": "Ground truth for SuperPitchMonitor test files",
+  "version": "2.0",
+  "sample_rate": 44100,
+  "duration_sec": 10.0,
+  "fft_resolution_hz": 0.1,
+  "files": {
+    "sine_220hz.wav": {
+      "type": "single_tone",
+      "description": "Pure sine wave at 220.0 Hz (A3)",
+      "duration_sec": 10.0,
+      "fundamentals": [
+        {
+          "freq": 220.0,
+          "note": "A3",
+          "midi": 57
+        }
+      ]
+    },
+    "sine_440hz.wav": {
+      "type": "single_tone",
+      "description": "Pure sine wave at 440.0 Hz (A4)",
+      "duration_sec": 10.0,
+      "fundamentals": [
+        {
+          "freq": 440.0,
+          "note": "A4",
+          "midi": 69
+        }
+      ]
+    },
+    "sine_880hz.wav": {
+      "type": "single_tone",
+      "description": "Pure sine wave at 880.0 Hz (A5)",
+      "duration_sec": 10.0,
+      "fundamentals": [
+        {
+          "freq": 880.0,
+          "note": "A5",
+          "midi": 81
+        }
+      ]
+    },
+    "piano_like_c.wav": {
+      "type": "single_note",
+      "description": "Piano-like C4 note with harmonics",
+      "duration_sec": 10.0,
+      "fundamentals": [
+        {
+          "freq": 261.63,
+          "note": "C4",
+          "midi": 60
+        }
+      ]
+    },
+    "chord_c_major_piano.wav": {
+      "type": "simple_chord",
+      "description": "C Major (C4-E4-G4)",
+      "duration_sec": 10.0,
+      "fundamentals": [
+        {
+          "freq": 261.63,
+          "note": "C4",
+          "midi": 60
+        },
+        {
+          "freq": 329.63,
+          "note": "E4",
+          "midi": 64
+        },
+        {
+          "freq": 392.0,
+          "note": "G4",
+          "midi": 67
+        }
+      ]
+    },
+    "chord_c_major_7_piano.wav": {
+      "type": "simple_chord",
+      "description": "C Major 7 (C4-E4-G4-C5)",
+      "duration_sec": 10.0,
+      "fundamentals": [
+        {
+          "freq": 261.63,
+          "note": "C4",
+          "midi": 60
+        },
+        {
+          "freq": 329.63,
+          "note": "E4",
+          "midi": 64
+        },
+        {
+          "freq": 392.0,
+          "note": "G4",
+          "midi": 67
+        },
+        {
+          "freq": 523.25,
+          "note": "C5",
+          "midi": 71
+        }
+      ]
+    },
+    "chord_a_minor.wav": {
+      "type": "simple_chord",
+      "description": "A Minor (A3-C4-E4)",
+      "duration_sec": 10.0,
+      "fundamentals": [
+        {
+          "freq": 220.0,
+          "note": "A3",
+          "midi": 57
+        },
+        {
+          "freq": 261.63,
+          "note": "C4",
+          "midi": 60
+        },
+        {
+          "freq": 329.63,
+          "note": "E4",
+          "midi": 64
+        }
+      ]
+    },
+    "chord_g_major.wav": {
+      "type": "simple_chord",
+      "description": "G Major (G3-B3-D4)",
+      "duration_sec": 10.0,
+      "fundamentals": [
+        {
+          "freq": 196.0,
+          "note": "G3",
+          "midi": 55
+        },
+        {
+          "freq": 246.94,
+          "note": "B3",
+          "midi": 58
+        },
+        {
+          "freq": 293.66,
+          "note": "D4",
+          "midi": 61
+        }
+      ]
+    },
+    "chord_c7_brass.wav": {
+      "type": "chord",
+      "description": "C7 Brass (C4-E4-G4-Bb4)",
+      "duration_sec": 10.0,
+      "fundamentals": [
+        {
+          "freq": 261.63,
+          "note": "C4",
+          "midi": 60
+        },
+        {
+          "freq": 329.63,
+          "note": "E4",
+          "midi": 64
+        },
+        {
+          "freq": 392.0,
+          "note": "G4",
+          "midi": 67
+        },
+        {
+          "freq": 466.16,
+          "note": "A#4",
+          "midi": 69
+        }
+      ]
+    },
+    "white_noise.wav": {
+      "type": "noise",
+      "description": "White noise",
+      "duration_sec": 10.0,
+      "fundamentals": []
+    }
+  }
+}
