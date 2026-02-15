@@ -52,7 +52,7 @@ void PolyphonicDetector::detect(const SpectrumData& spectrum, PitchVector& resul
         return;
     }
     
-    // 输出FFT峰值（YIN之前）
+    // Output FFT peaks (before YIN)
     std::vector<Peak> fftPeaks;
     BandSpectrumData singleBand;
     singleBand.frequencies = spectrum.frequencies;
@@ -64,7 +64,7 @@ void PolyphonicDetector::detect(const SpectrumData& spectrum, PitchVector& resul
     float threshold = maxMag * 0.005f;
     findPeaksInBand(singleBand, fftPeaks, 1, threshold);
     
-    // 输出FFT峰值
+    // Output FFT peaks
     juce::String fftLog = "[Pitch][Frame " + juce::String(frameNum) + "] FFT Peaks: ";
     if (fftPeaks.empty()) {
         fftLog += "None";
@@ -103,7 +103,7 @@ void PolyphonicDetector::detect(const SpectrumData& spectrum, PitchVector& resul
         }
     }
     
-    // 输出最终结果
+    // Output final results
     juce::String logMsg = "[Pitch][Frame " + juce::String(frameNum) + "] Final Results: ";
     
     if (results.empty())
@@ -171,7 +171,7 @@ void PolyphonicDetector::detectPolyphonicFFT(const SpectrumData& spectrum, Pitch
     
     for (size_t i = 0; i < peaks.size() && i < 20; ++i)
     {
-        // 只跳过极低频率（避免DC分量和噪声）
+        // Skip only very low frequencies (avoid DC and noise)
         if (peaks[i].frequency < 30.0f) continue;
         
         auto candidate = evaluateAsFundamental(peaks, i, nullptr);
@@ -244,7 +244,7 @@ void PolyphonicDetector::detectMultiResolutionImpl(const MultiResolutionData& mu
     
     std::vector<Peak> allPeaks;
     
-    // 低频带
+    // Low frequency band
     std::vector<Peak> lowPeaks;
     if (multiData.lowBand().hasRefinedFreqs) {
         detectLowBand(multiData.lowBand(), lowPeaks);
@@ -264,7 +264,7 @@ void PolyphonicDetector::detectMultiResolutionImpl(const MultiResolutionData& mu
     }
     SPM_LOG_INFO(lowDebug);
     
-    // 中频带
+    // Mid frequency band
     std::vector<Peak> midPeaks;
     if (multiData.midBand().hasRefinedFreqs) {
         detectMidBand(multiData.midBand(), midPeaks);
@@ -303,7 +303,7 @@ void PolyphonicDetector::detectMultiResolutionImpl(const MultiResolutionData& mu
     
     for (size_t i = 0; i < allPeaks.size() && i < 15; ++i)
     {
-        // 只跳过极低频率（避免DC分量和噪声）
+        // Skip only very low frequencies (avoid DC and noise)
         if (allPeaks[i].frequency < 30.0f) continue;
         
         auto candidate = evaluateAsFundamental(allPeaks, i, &multiData);
@@ -314,7 +314,7 @@ void PolyphonicDetector::detectMultiResolutionImpl(const MultiResolutionData& mu
         }
     }
     
-    // 按频率从低到高排序（关键修复：从低频开始检测）
+    // Sort by frequency from low to high (critical fix: start detection from low frequencies)
     std::sort(candidates.begin(), candidates.end(),
               [](const PitchCandidate& a, const PitchCandidate& b) {
                   return a.frequency < b.frequency;
@@ -334,11 +334,11 @@ void PolyphonicDetector::detectMultiResolutionImpl(const MultiResolutionData& mu
     }
     SPM_LOG_INFO(candLog);
     
-    // 新策略：渐进式谐波惩罚
-    // 从低到高处理候选，应用谐波惩罚后检查剩余置信度
-    // 降低阈值：宁可错判，不可漏判
-    const float minConfidence = 0.15f;  // 从 0.25 降低到 0.15
-    const float minConfidenceAfterPenalty = 0.10f;  // 从 0.20 降低到 0.10
+    // New strategy: progressive harmonic penalty
+    // Process candidates from low to high, check remaining confidence after harmonic penalty
+    // Lower threshold: better false positive than false negative
+    const float minConfidence = 0.15f;  // Reduced from 0.25 to 0.15
+    const float minConfidenceAfterPenalty = 0.10f;  // Reduced from 0.20 to 0.10
     
     std::sort(candidates.begin(), candidates.end(),
               [](const PitchCandidate& a, const PitchCandidate& b) {
@@ -355,27 +355,27 @@ void PolyphonicDetector::detectMultiResolutionImpl(const MultiResolutionData& mu
         if (cand.confidence < minConfidence)
             continue;
         
-        // 预筛选：验证候选的谐波结构独立性
-        // 策略：如果低频候选的谐波与高频候选的谐波集合重叠，则降低其置信度
+        // Pre-screening: verify harmonic structure independence
+        // Strategy: reduce confidence if low-freq candidate's harmonics overlap with high-freq candidates'
         if (selectedCandidates.empty()) {
-            // 计算当前候选的谐波集合
+            // Calculate current candidate's harmonic set
             std::vector<float> candidateHarmonics;
             for (int h = 2; h <= 6; ++h) {
                 candidateHarmonics.push_back(cand.frequency * h);
             }
             
-            // 计算所有其他候选的合并谐波集合
+            // Calculate combined harmonic set of all other candidates
             std::vector<float> otherHarmonics;
             for (const auto& other : candidates) {
                 if (other.frequency <= cand.frequency) continue;
-                // 为每个其他候选添加其基频和谐波
-                otherHarmonics.push_back(other.frequency);  // 基频
+                // Add fundamental and harmonics for each other candidate
+                otherHarmonics.push_back(other.frequency);  // Fundamental
                 for (int h = 2; h <= 4; ++h) {
                     otherHarmonics.push_back(other.frequency * h);
                 }
             }
             
-            // 检查候选的谐波有多少与其他候选的谐波匹配（宽松匹配）
+            // Check how many candidate harmonics match other candidates' harmonics (loose matching)
             int overlappingCount = 0;
             float totalOverlapScore = 0.0f;
             for (float candHarm : candidateHarmonics) {
@@ -383,25 +383,25 @@ void PolyphonicDetector::detectMultiResolutionImpl(const MultiResolutionData& mu
                     float freqDiff = std::abs(candHarm - otherHarm);
                     float relativeDiff = freqDiff / std::max(candHarm, otherHarm);
                     
-                    // 放宽容差到 10%
+                    // Relax tolerance to 10%
                     if (relativeDiff < 0.10f) {
                         overlappingCount++;
                         float overlapScore = 1.0f - (relativeDiff / 0.10f);
                         totalOverlapScore += overlapScore;
-                        break;  // 找到一个匹配即可
+                        break;  // Found one match
                     }
                 }
             }
             
-            // 放宽预筛选：即使有谐波重叠，也只轻微降低置信度
-            // 宁可错判，不可漏判 - 低能量错判可以接受
+            // Relax pre-screening: even with harmonic overlap, only slightly reduce confidence
+            // Better false positive than false negative - low-energy false positives acceptable
             float overlapRatio = candidateHarmonics.empty() ? 0.0f : 
                                 (float)overlappingCount / candidateHarmonics.size();
             
-            // 只有高度重叠时才轻微削减（保留更多候选）
+            // Only slight reduction with high overlap (keep more candidates)
             if (overlapRatio >= 0.6f && totalOverlapScore >= 2.5f) {
                 float originalConf = cand.confidence;
-                // 轻微削减：60%重叠时置信度降至原来的 70%
+                // Slight reduction: confidence drops to 70% at 60% overlap
                 float reductionFactor = 0.70f + 0.30f * (1.0f - overlapRatio);  // 0.7~1.0
                 cand.confidence *= reductionFactor;
                 SPM_LOG_INFO("[PRE] " + juce::String(cand.frequency, 1) + "Hz overlap=" + 
@@ -412,7 +412,7 @@ void PolyphonicDetector::detectMultiResolutionImpl(const MultiResolutionData& mu
             }
         }
         
-        // 计算谐波惩罚：基于与已选基频及其谐波的频率距离
+        // Calculate harmonic penalty: based on frequency distance to selected fundamentals
         float penalty = 0.0f;
         juce::String penaltyDetails;
         
@@ -420,31 +420,31 @@ void PolyphonicDetector::detectMultiResolutionImpl(const MultiResolutionData& mu
         {
             float fundFreq = selected.frequency;
             
-            // 检查与基频的距离（0次谐波）
+            // Check distance to fundamental (0th harmonic)
             float fundDiff = std::abs(cand.frequency - fundFreq);
             float fundRelativeDiff = fundDiff / fundFreq;
             
-            if (fundRelativeDiff < 0.10f) {  // 10% 容差
-                // 接近基频本身，大幅惩罚（可能是同一个音的不同检测）
+            if (fundRelativeDiff < 0.10f) {  // 10% tolerance
+                // Close to fundamental itself, heavy penalty (possibly same note detected differently)
                 float fundPenalty = cand.confidence * (1.0f - fundRelativeDiff / 0.10f) * 0.9f;
                 penalty += fundPenalty;
                 penaltyDetails += "F" + juce::String((int)fundFreq) + "(" + juce::String(fundPenalty, 2) + ") ";
             }
             
-            // 检查与各次谐波的距离
+            // Check distance to each harmonic
             for (int h = 2; h <= 6; ++h)
             {
                 float harmonicFreq = fundFreq * h;
                 float harmonicDiff = std::abs(cand.frequency - harmonicFreq);
                 float harmonicRelativeDiff = harmonicDiff / harmonicFreq;
                 
-                // 谐波惩罚窗口：基于谐波次数（高次谐波更宽）
+                // Harmonic penalty window: based on harmonic order (higher orders wider)
                 float harmonicTolerance = 0.06f + h * 0.01f;  // H2: 8%, H6: 12%
                 
                 if (harmonicRelativeDiff < harmonicTolerance)
                 {
-                    // 距离谐波越近，惩罚越大
-                    // 基础惩罚系数：1/h（高次谐波惩罚较小）
+                    // Closer to harmonic, larger penalty
+                    // Base penalty factor: 1/h (higher harmonics have smaller penalty)
                     float baseHarmonicPenalty = 1.0f / h;
                     float proximityFactor = 1.0f - (harmonicRelativeDiff / harmonicTolerance);
                     float harmonicPenalty = cand.confidence * baseHarmonicPenalty * proximityFactor;
@@ -455,7 +455,7 @@ void PolyphonicDetector::detectMultiResolutionImpl(const MultiResolutionData& mu
             }
         }
         
-        // 限制惩罚不超过原始置信度
+        // Limit penalty to not exceed original confidence
         penalty = std::min(penalty, cand.confidence * 0.95f);
         float remainingConfidence = cand.confidence - penalty;
         
@@ -467,11 +467,11 @@ void PolyphonicDetector::detectMultiResolutionImpl(const MultiResolutionData& mu
             penalLog += " from:" + penaltyDetails;
         }
         
-        // 决策：剩余置信度是否足够
+        // Decision: is remaining confidence sufficient
         bool acceptAsFundamental = false;
         if (remainingConfidence >= minConfidenceAfterPenalty) {
-            // 可选：对剩余置信度进行 YIN 验证
-            // 为简化，暂时接受，但标记为需要验证
+            // Optional: YIN verification for remaining confidence
+            // For simplicity, accept for now but mark as needing verification
             acceptAsFundamental = true;
             penalLog += " [ACCEPT]";
         } else {
@@ -480,16 +480,16 @@ void PolyphonicDetector::detectMultiResolutionImpl(const MultiResolutionData& mu
         SPM_LOG_INFO(penalLog);
         
         if (acceptAsFundamental) {
-            // 移除后验证拒绝逻辑 - 宁可错判，不可漏判
-            // 低能量的"借来"谐波可以接受（主面板上痕迹淡）
+            // Remove post-verification rejection - better false positive than false negative
+            // Low-energy "borrowed" harmonics acceptable (faint traces on main panel)
             
-            // 更新候选的置信度为剩余值
+            // Update candidate confidence to remaining value
             cand.confidence = remainingConfidence;
             selectedCandidates.push_back(cand);
         }
     }
     
-    // 复制结果
+    // Copy results
     for (const auto& cand : selectedCandidates) {
         results.push_back(cand);
     }
@@ -573,10 +573,10 @@ void PolyphonicDetector::findPeaksInBand(const BandSpectrumData& bandData,
         float mag = mags[i];
         if (mag < actualThreshold) continue;
         
-        // 放宽局部最大值检测：比左右各1个点都高即可
+        // Relax local max detection: higher than 1 point on each side
         if (mag > mags[i-1] && mag > mags[i+1])
         {
-            // 放宽检查：峰值应该高于周围（至少5%即可）
+            // Relax check: peak should be above surroundings (at least 5%)
             float neighborAvg = (mags[i-1] + mags[i+1]) * 0.5f;
             if (mag < neighborAvg * 1.05f) {
                 continue;
@@ -622,13 +622,13 @@ PitchCandidate PolyphonicDetector::evaluateAsFundamental(
     float fundFreq = candidate.frequency;
     float maxMag = allPeaks.empty() ? 1.0f : allPeaks[0].magnitude;
     
-    // ========== 详细日志开始 ==========
+    // ========== Detailed logging start ==========
     juce::String dbgLog = "[EVAL] Evaluating " + juce::String(fundFreq, 1) + "Hz (" + 
                           juce::String(candidate.midiNote, 1) + ") mag=" + juce::String(peak.magnitude, 3);
     
-    // 1. 检查当前候选是否是某个更强峰值的次谐波
-    // 关键修复：如果存在一个更强的峰值，使得当前频率 ≈ 更强峰值 / n，则当前是次谐波
-    std::vector<size_t> possibleFundamentals;  // 存储可能作为基频的峰值索引
+    // 1. Check if current candidate is sub-harmonic of a stronger peak
+    // Key fix: if a stronger peak exists where current freq ≈ stronger peak / n, it's sub-harmonic
+    std::vector<size_t> possibleFundamentals;  // Store indices of peaks that could be fundamentals
     juce::String possibleFundLog;
     bool isStrongSubHarmonic = false;
     float strongestFundamentalMag = 0.0f;
@@ -640,8 +640,8 @@ PitchCandidate PolyphonicDetector::evaluateAsFundamental(
         float otherFreq = allPeaks[i].frequency;
         float otherMag = allPeaks[i].magnitude;
         
-        // 检查当前频率是否是 otherFreq 的整数分之一（即 otherFreq = n * fundFreq）
-        if (otherFreq > fundFreq * 1.5f)  // otherFreq 显著更高
+        // Check if current frequency is integer fraction of otherFreq (i.e., otherFreq = n * fundFreq)
+        if (otherFreq > fundFreq * 1.5f)  // otherFreq significantly higher
         {
             float ratio = otherFreq / fundFreq;
             int nearestInt = juce::roundToInt(ratio);
@@ -655,7 +655,7 @@ PitchCandidate PolyphonicDetector::evaluateAsFundamental(
                     possibleFundLog += juce::String(otherFreq, 1) + "Hz(H" + 
                                       juce::String(nearestInt) + ") ";
                     
-                    // 关键修复：如果"基频"比当前候选强很多，当前候选很可能是次谐波
+                    // Key fix: if "fundamental" is much stronger than current, current is likely sub-harmonic
                     if (otherMag > candidate.amplitude * 1.5f)
                     {
                         isStrongSubHarmonic = true;
@@ -672,12 +672,12 @@ PitchCandidate PolyphonicDetector::evaluateAsFundamental(
         dbgLog += " | isStrongSubHarmonic=" + juce::String(isStrongSubHarmonic ? "YES" : "NO");
     }
     
-    // 2. 搜索谐波，同时检查是否是"借来的"或"独立基频"
-    std::vector<std::pair<int, float>> ownHarmonics;      // 真正属于当前频率的谐波
-    std::vector<std::pair<int, float>> borrowedHarmonics; // 属于其他"基频"的谐波
+    // 2. Search harmonics, check if "borrowed" or "independent fundamental"
+    std::vector<std::pair<int, float>> ownHarmonics;      // Harmonics truly belonging to current frequency
+    std::vector<std::pair<int, float>> borrowedHarmonics; // Harmonics belonging to other "fundamentals"
     juce::String ownLog, borrowedLog;
     
-    // 预先计算哪些峰值是"独立基频"候选（有多个自己的谐波）
+    // Pre-calculate which peaks are "independent fundamental" candidates (have multiple own harmonics)
     std::vector<bool> isPeakIndependentFundamental(allPeaks.size(), false);
     for (size_t i = 0; i < allPeaks.size(); ++i)
     {
@@ -695,7 +695,7 @@ PitchCandidate PolyphonicDetector::evaluateAsFundamental(
                 }
             }
         }
-        // 如果有3个或更多谐波，标记为独立基频
+        // If 3 or more harmonics, mark as independent fundamental
         if (harmonicsCount >= 3)
         {
             isPeakIndependentFundamental[i] = true;
@@ -714,7 +714,7 @@ PitchCandidate PolyphonicDetector::evaluateAsFundamental(
             
             if (deviation < 0.03f)
             {
-                // 检查这个峰值是否是某个更强峰值的谐波
+                // Check if this peak is harmonic of a stronger peak
                 bool isBorrowed = false;
                 size_t borrowedFromIdx = 0;
                 
@@ -729,7 +729,7 @@ PitchCandidate PolyphonicDetector::evaluateAsFundamental(
                         float dev2 = std::abs(ratio2 - nearestInt2) / nearestInt2;
                         if (dev2 < 0.03f)
                         {
-                            // 如果"基频"更强或相当，这个谐波是借来的
+                            // If "fundamental" is stronger or comparable, this harmonic is borrowed
                             if (allPeaks[fundIdx].magnitude >= candidate.amplitude * 0.8f)
                             {
                                 isBorrowed = true;
@@ -744,7 +744,7 @@ PitchCandidate PolyphonicDetector::evaluateAsFundamental(
                     }
                 }
                 
-                // 关键修复：如果这个"谐波"本身是独立基频，标记为借来的
+                // Key fix: if this "harmonic" itself is independent fundamental, mark as borrowed
                 if (!isBorrowed && isPeakIndependentFundamental[i])
                 {
                     borrowedHarmonics.push_back({h, p.magnitude});
@@ -758,20 +758,20 @@ PitchCandidate PolyphonicDetector::evaluateAsFundamental(
                     ownHarmonics.push_back({h, p.magnitude});
                     ownLog += "H" + juce::String(h) + "=" + juce::String(p.frequency, 1) + "Hz ";
                 }
-                break;  // 只取第一个匹配的峰值
+                break;  // Only take first matching peak
             }
         }
     }
     
-    // 3. 判断是否真的是次谐波 - 使用多重条件
+    // 3. Determine if truly sub-harmonic - using multiple conditions
     int totalFoundHarmonics = (int)ownHarmonics.size() + (int)borrowedHarmonics.size();
     float borrowedRatio = totalFoundHarmonics > 0 ? (float)borrowedHarmonics.size() / totalFoundHarmonics : 0.0f;
     
-    // 检查谐波是否连续（关键修复：真正的基频应该有连续的谐波 H2, H3, H4...）
+    // Check if harmonics are consecutive (key fix: true fundamental has consecutive H2, H3, H4...)
     bool hasConsecutiveHarmonics = false;
     if (ownHarmonics.size() >= 3)
     {
-        // 检查是否有至少3个连续的谐波
+        // Check if at least 3 consecutive harmonics
         int consecutiveCount = 1;
         for (size_t i = 1; i < ownHarmonics.size(); ++i)
         {
@@ -791,22 +791,22 @@ PitchCandidate PolyphonicDetector::evaluateAsFundamental(
         }
     }
     
-    // 条件1：如果超过50%的"谐波"是借来的，则当前候选是次谐波
+    // Condition 1: if >50% "harmonics" are borrowed, current is sub-harmonic
     bool isSubHarmonic = !possibleFundamentals.empty() && borrowedRatio >= 0.5f;
     
-    // 条件2：如果所有找到的谐波都是借来的，确定是次谐波
+    // Condition 2: if all found harmonics are borrowed, definitely sub-harmonic
     if (totalFoundHarmonics > 0 && ownHarmonics.size() == 0)
     {
         isSubHarmonic = true;
     }
     
-    // 条件3：如果存在一个强得多的基频，当前是次谐波
+    // Condition 3: if a much stronger fundamental exists, current is sub-harmonic
     if (isStrongSubHarmonic)
     {
         isSubHarmonic = true;
     }
     
-    // 条件4（关键修复）：如果没有连续的谐波序列，可能是虚假基频
+    // Condition 4 (key fix): if no consecutive harmonic series, may be spurious fundamental
     if (ownHarmonics.size() >= 3 && !hasConsecutiveHarmonics && !possibleFundamentals.empty())
     {
         isSubHarmonic = true;
@@ -817,7 +817,7 @@ PitchCandidate PolyphonicDetector::evaluateAsFundamental(
     dbgLog += " | borrowedRatio=" + juce::String(borrowedRatio, 2);
     dbgLog += " | isSubHarmonic=" + juce::String(isSubHarmonic ? "YES" : "NO");
     
-    // 4. 使用真正属于自己的谐波计算质量
+    // 4. Calculate quality using truly own harmonics
     float harmonicQuality = 0.0f;
     int consecutiveCount = 0;
     int maxConsecutive = 0;
@@ -847,30 +847,30 @@ PitchCandidate PolyphonicDetector::evaluateAsFundamental(
     
     candidate.harmonicCount = 1 + (int)ownHarmonics.size();
     
-    // 5. 计算置信度 - 基于真正属于自己的谐波
+    // 5. Calculate confidence - based on truly own harmonics
     float relativeAmp = candidate.amplitude / maxMag;
     float baseScore = relativeAmp * 0.3f;
     float harmonicScore = std::min(0.5f, harmonicQuality * 0.25f + maxConsecutive * 0.08f);
     
-    // 次谐波惩罚 - 基于借来的谐波比例（放宽：宁可错判，不可漏判）
+    // Sub-harmonic penalty - based on borrowed ratio (relaxed: better false positive)
     float penalty = 0.0f;
     if (isSubHarmonic)
     {
         int totalHarmonics = (int)ownHarmonics.size() + (int)borrowedHarmonics.size();
         float borrowedRatio = (float)borrowedHarmonics.size() / totalHarmonics;
-        // 降低惩罚：次谐波仍有机会被检测（低置信度）
-        penalty = 0.15f + 0.25f * borrowedRatio;  // 从 0.3+0.5 降低到 0.15+0.25
+        // Reduce penalty: sub-harmonics still have chance to be detected (low confidence)
+        penalty = 0.15f + 0.25f * borrowedRatio;  // Reduced from 0.3+0.5 to 0.15+0.25
         
-        // 如果自己有很少的真正谐波，轻微增加惩罚
+        // If has few true own harmonics, slightly increase penalty
         if (ownHarmonics.size() <= 2)
         {
-            penalty += 0.1f;  // 从 0.2 降低到 0.1
+            penalty += 0.1f;  // Reduced from 0.2 to 0.1
         }
     }
     
     float rawConfidence = baseScore + harmonicScore - penalty;
     
-    // 调整最小置信度
+    // Adjust minimum confidence
     if (ownHarmonics.size() >= 4 && !isSubHarmonic)
     {
         rawConfidence = std::max(rawConfidence, 0.75f);
@@ -882,15 +882,15 @@ PitchCandidate PolyphonicDetector::evaluateAsFundamental(
     
     candidate.confidence = juce::jlimit(0.0f, 1.0f, rawConfidence);
     
-    // 输出详细计算日志
+    // Output detailed calculation log
     dbgLog += " | base=" + juce::String(baseScore, 2) + 
               " harm=" + juce::String(harmonicScore, 2) + 
               " penalty=" + juce::String(penalty, 2) + 
               " conf=" + juce::String(candidate.confidence, 2);
     
-    // 只在多分辨率模式或调试时输出
+    // Only output in multi-resolution mode or debugging
     static int logCounter = 0;
-    if (++logCounter % 5 == 0 || multiData != nullptr)  // 每5帧输出一次避免日志过多
+    if (++logCounter % 5 == 0 || multiData != nullptr)  // Output every 5 frames to avoid log spam
     {
         SPM_LOG_INFO(dbgLog);
     }

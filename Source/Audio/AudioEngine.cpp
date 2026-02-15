@@ -406,7 +406,7 @@ void AudioEngine::processAudioBlock(const juce::AudioBuffer<float>& buffer)
     
     if (useMultiResolution_ && multiResAnalyzer_)
     {
-        // 多分辨率模式
+        // Multi-resolution mode
         multiResAnalyzer_->process(buffer, *multiResData_);
         multiResAnalyzer_->getFusedSpectrum(*multiResData_, spectrumData);
         
@@ -419,7 +419,7 @@ void AudioEngine::processAudioBlock(const juce::AudioBuffer<float>& buffer)
     }
     else
     {
-        // 标准模式
+        // Standard mode
         spectrumAnalyzer_->process(buffer, spectrumData);
     }
     
@@ -439,12 +439,12 @@ void AudioEngine::processAudioBlock(const juce::AudioBuffer<float>& buffer)
     PitchVector pitches;
     if (useMultiResolution_ && multiResData_ && multiResData_->isComplete)
     {
-        // 使用多分辨率数据检测
+        // Detect using multi-resolution data
         polyphonicDetector_->detectMultiResolution(*multiResData_, pitches);
     }
     else
     {
-        // 标准检测
+        // Standard detection
         polyphonicDetector_->detect(spectrumData, pitches);
     }
     
@@ -511,7 +511,7 @@ void AudioEngine::setMultiResolutionEnabled(bool enabled)
     
     if (enabled && multiResAnalyzer_ && polyphonicDetector_)
     {
-        // 启用多分辨率模式时重新准备
+        // Re-prepare when enabling multi-resolution mode
         multiResAnalyzer_->prepare(sampleRate_);
         polyphonicDetector_->setMultiResolutionEnabled(true);
         SPM_LOG_INFO("[AudioEngine] Multi-resolution analysis enabled");

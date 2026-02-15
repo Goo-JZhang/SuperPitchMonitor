@@ -363,13 +363,13 @@ void MainComponent::buttonClicked(juce::Button* button)
         }
         else
         {
-            // ===== 输出当前 Settings 配置 =====
+            // ===== Output current Settings configuration =====
             SPM_LOG_INFO("========================================");
             SPM_LOG_INFO("[START] ====== DETECTION STARTED ======");
             SPM_LOG_INFO("[START] Input Source: " + audioEngine_->getInputSourceName());
             SPM_LOG_INFO("[START] Multi-resolution: " + juce::String(audioEngine_->isMultiResolutionEnabled() ? "ON" : "OFF"));
             
-            // 获取 SettingsPanel 的配置
+            // Get SettingsPanel configuration
             if (settingsPanel_ && settingsPanel_->getContent())
             {
                 auto* content = settingsPanel_->getContent();

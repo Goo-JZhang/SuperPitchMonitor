@@ -21,39 +21,39 @@ void BandAnalysisTask::prepare(double sampleRate)
     sampleRate_ = sampleRate;
     config_.calculateParams(sampleRate);
     
-    // 创建FFT实例
+    // Create FFT instance
     fft_ = std::make_unique<juce::dsp::FFT>(config_.fftOrder);
     
-    // 分配缓冲区
-    fftBuffer_.setSize(1, config_.fftSize * 2);  // FFT需要2倍空间（复数）
+    // Allocate buffers
+    fftBuffer_.setSize(1, config_.fftSize * 2);  // FFT needs 2x space for complex numbers
     windowBuffer_.setSize(1, config_.fftSize);
     windowCoeffs_.resize(config_.fftSize);
     prevPhases_.resize(config_.fftSize / 2 + 1, 0.0f);
     
-    // 创建环形缓冲区（存储2个FFT窗长度的数据，支持滑动窗口）
+    // Create circular buffer (stores 2 FFT window lengths, supports sliding window)
     circularBuffer_.setSize(1, config_.fftSize * 2);
     circularBuffer_.clear();
     writePos_ = 0;
     samplesSinceFFT_ = 0;
     
-    // 初始化YIN检测器 - 严格限制在频带范围内
-    // 避免跨频带检测（如低频YIN不应检测到C2当输入是C4和弦时）
-    yinBufferSize_ = 2048;  // 统一使用2048，平衡精度和延迟
+    // Initialize YIN detector - strictly limited to frequency band
+    // Avoid cross-band detection (e.g., low-band YIN shouldn't detect C2 when input is C4 chord)
+    yinBufferSize_ = 2048;  // Use 2048 uniformly to balance accuracy and latency
     
     yinDetector_ = std::make_unique<YinPitchDetector>();
     
-    // 严格限制YIN检测范围在频带内，避免误检其他频带信号
+    // Strictly limit YIN detection range within band to avoid false detection
     float yinMinFreq = config_.minFreq;
     float yinMaxFreq = config_.maxFreq;
     
-    // 特殊处理：低频带不使用YIN（FFT已足够精确）
+    // Special handling: low band doesn't use YIN (FFT is accurate enough)
     if (bandIndex_ == 0) {
-        yinMinFreq = 80.0f;  // 低频YIN只检测80Hz以上（最低E2）
-        yinMaxFreq = 400.0f; // 不检测太高，避免与其他频带冲突
+        yinMinFreq = 80.0f;  // Low-band YIN only detects above 80Hz (lowest E2)
+        yinMaxFreq = 400.0f; // Don't detect too high to avoid band conflicts
     }
     
     yinDetector_->prepare(sampleRate, yinMinFreq, yinMaxFreq, yinBufferSize_);
-    yinDetector_->setThreshold(0.2f);  // 提高阈值，减少误判
+    yinDetector_->setThreshold(0.2f);  // Increase threshold to reduce false positives
     
     createWindow();
     
@@ -109,7 +109,7 @@ void BandAnalysisTask::process(const juce::AudioBuffer<float>& input, BandSpectr
     const int numSamples = input.getNumSamples();
     const float* inputData = input.getReadPointer(0);
     
-    // 写入环形缓冲区
+    // Write to circular buffer
     for (int i = 0; i < numSamples; ++i) {
         circularBuffer_.setSample(0, writePos_, inputData[i]);
         writePos_ = (writePos_ + 1) % circularBuffer_.getNumSamples();
@@ -117,53 +117,53 @@ void BandAnalysisTask::process(const juce::AudioBuffer<float>& input, BandSpectr
     
     samplesSinceFFT_ += numSamples;
     
-    // 检查是否达到hop size
+    // Check if hop size reached
     if (samplesSinceFFT_ < config_.hopSize) {
-        // 即使没有新FFT，也尝试运行YIN（使用历史缓冲区）
-        // 但只在有之前FFT数据的情况下
+        // Try running YIN even without new FFT (using history buffer)
+        // But only when previous FFT data exists
         if (bandIndex_ > 0 && !output.magnitudes.empty()) {
             performYinAnalysis(input, output);
         }
-        output.hasRefinedFreqs = false;  // 标记FFT数据未更新
+        output.hasRefinedFreqs = false;  // Mark FFT data as not updated
         return;
     }
     
     samplesSinceFFT_ = 0;
     
-    // 复制数据到FFT缓冲区并加窗
+    // Copy data to FFT buffer and apply window
     copyToFFTBuffer();
     
-    // 执行FFT（必须先于YIN，YIN需要频谱验证）
+    // Execute FFT (must be before YIN, YIN needs spectrum verification)
     performFFT(output);
     
-    // 提取幅度和相位
+    // Extract magnitude and phase
     extractMagnitudesAndPhases(output);
     
-    // 相位声码器精化
+    // Phase vocoder refinement
     calculateRefinedFrequencies(output);
     
-    // 设置元数据
+    // Set metadata
     output.bandIndex = bandIndex_;
     output.sampleRate = static_cast<float>(sampleRate_);
     output.hasRefinedFreqs = true;
     
-    // YIN分析：所有频带使用时域分析提供精确频率
-    // 在FFT之后运行，以便验证频谱
-    // 关键修复：低频带也需要YIN来区分密集的基频（如C4-E4-G4和弦）
+    // YIN analysis: all bands use time-domain for precise frequency
+    // Run after FFT for spectrum verification
+    // Key fix: low band also needs YIN to distinguish dense fundamentals (e.g., C4-E4-G4 chord)
     performYinAnalysis(input, output);
 }
 
 void BandAnalysisTask::performYinAnalysis(const juce::AudioBuffer<float>& input, 
                                            BandSpectrumData& output)
 {
-    // 关键：先检查频谱中对应频段是否有能量
-    // 如果频谱显示该频段没有峰值，YIN不应该检测出pitch
+    // Key: first check if target band has energy in spectrum
+    // If spectrum shows no peaks in band, YIN shouldn't detect pitch
     if (output.magnitudes.empty()) {
         output.hasYinResult = false;
         return;
     }
     
-    // 计算目标频段内的频谱能量
+    // Calculate spectral energy in target band
     float bandEnergy = 0.0f;
     float totalEnergy = 0.0f;
     int bandBinStart = static_cast<int>(config_.minFreq / config_.binWidth);
@@ -179,14 +179,14 @@ void BandAnalysisTask::performYinAnalysis(const juce::AudioBuffer<float>& input,
         }
     }
     
-    // 如果目标频段能量占比太低，不运行YIN
+    // If target band energy ratio too low, don't run YIN
     float energyRatio = (totalEnergy > 0) ? bandEnergy / totalEnergy : 0.0f;
-    if (energyRatio < 0.1f || bandEnergy < 1.0f) {  // 需要至少10%能量在该频段
+    if (energyRatio < 0.1f || bandEnergy < 1.0f) {  // Need at least 10% energy in band
         output.hasYinResult = false;
         return;
     }
     
-    // 检查目标频段内是否有明显的峰值
+    // Check for clear peaks in target band
     bool hasPeakInBand = false;
     float maxBandMag = 0.0f;
     for (int i = bandBinStart; i <= bandBinEnd && i < (int)output.magnitudes.size(); ++i) {
@@ -195,10 +195,10 @@ void BandAnalysisTask::performYinAnalysis(const juce::AudioBuffer<float>& input,
         }
     }
     
-    // 需要至少一个局部最大值显著高于周围
+    // Need at least one local max significantly above surroundings
     for (int i = bandBinStart + 2; i < bandBinEnd - 2 && i < (int)output.magnitudes.size() - 2; ++i) {
         float mag = output.magnitudes[i];
-        if (mag > maxBandMag * 0.5f &&  // 是主要峰值之一
+        if (mag > maxBandMag * 0.5f &&  // Is one of main peaks
             mag > output.magnitudes[i-1] && mag > output.magnitudes[i-2] &&
             mag > output.magnitudes[i+1] && mag > output.magnitudes[i+2]) {
             hasPeakInBand = true;
@@ -211,7 +211,7 @@ void BandAnalysisTask::performYinAnalysis(const juce::AudioBuffer<float>& input,
         return;
     }
     
-    // 从环形缓冲区读取最近的yinBufferSize_个样本
+    // Read last yinBufferSize_ samples from circular buffer
     std::vector<float> yinBuffer(yinBufferSize_);
     
     for (int i = 0; i < yinBufferSize_; ++i) {
@@ -220,21 +220,21 @@ void BandAnalysisTask::performYinAnalysis(const juce::AudioBuffer<float>& input,
         yinBuffer[i] = circularBuffer_.getSample(0, readPos);
     }
     
-    // 检查信号能量（避免静音时误判）
+    // Check signal energy (avoid false detection in silence)
     float rms = 0.0f;
     for (float s : yinBuffer) rms += s * s;
     rms = std::sqrt(rms / yinBufferSize_);
     
-    if (rms < 0.005f) {  // 提高噪声门限
+    if (rms < 0.005f) {  // Raise noise gate
         output.hasYinResult = false;
         return;
     }
     
-    // 执行YIN检测
+    // Execute YIN detection
     float yinFreq = yinDetector_->detectPitch(yinBuffer.data(), yinBufferSize_);
     float confidence = yinDetector_->getLastConfidence();
     
-    // 验证YIN结果与频谱一致：频谱中必须在YIN频率附近有能量
+    // Verify YIN result matches spectrum: energy must exist near YIN frequency
     bool spectrumConfirms = false;
     if (yinFreq >= config_.minFreq && yinFreq <= config_.maxFreq) {
         int expectedBin = static_cast<int>(yinFreq / config_.binWidth);
@@ -249,15 +249,15 @@ void BandAnalysisTask::performYinAnalysis(const juce::AudioBuffer<float>& input,
         }
     }
     
-    // 严格验证：检测结果必须在频带范围内，且与频谱一致
+    // Strict verification: result must be in band range and match spectrum
     if (yinFreq >= config_.minFreq && yinFreq <= config_.maxFreq && 
-        confidence > 0.5f && spectrumConfirms)  // 提高置信度阈值
+        confidence > 0.5f && spectrumConfirms)  // Raise confidence threshold
     {
         output.yinFrequency = yinFreq;
         output.yinConfidence = confidence;
         output.hasYinResult = true;
         
-        // 保存时域数据供后续使用
+        // Save time-domain data for later use
         output.timeDomain = std::move(yinBuffer);
         output.hasTimeDomain = true;
     }
@@ -271,13 +271,13 @@ void BandAnalysisTask::copyToFFTBuffer()
 {
     const int N = config_.fftSize;
     
-    // 从环形缓冲区读取最近的N个样本
+    // Read last N samples from circular buffer
     for (int i = 0; i < N; ++i) {
         int readPos = (writePos_ - N + i + circularBuffer_.getNumSamples()) 
                       % circularBuffer_.getNumSamples();
         float sample = circularBuffer_.getSample(0, readPos);
         
-        // 加窗并存储到FFT缓冲区（实部和虚部交错）
+        // Apply window and store to FFT buffer (interleaved real/imag)
         fftBuffer_.setSample(0, i * 2, sample * windowCoeffs_[i]);
         fftBuffer_.setSample(0, i * 2 + 1, 0.0f);
     }
@@ -285,17 +285,17 @@ void BandAnalysisTask::copyToFFTBuffer()
 
 void BandAnalysisTask::performFFT(BandSpectrumData& output)
 {
-    // 执行FFT
+    // Execute FFT
     fft_->performRealOnlyForwardTransform(fftBuffer_.getWritePointer(0), true);
     
-    // 准备输出数组
+    // Prepare output arrays
     const int numBins = config_.fftSize / 2 + 1;
     output.frequencies.resize(numBins);
     output.magnitudes.resize(numBins);
     output.phases.resize(numBins);
     output.refinedFreqs.resize(numBins);
     
-    // 计算频率刻度
+    // Calculate frequency scale
     for (int i = 0; i < numBins; ++i) {
         output.frequencies[i] = i * config_.binWidth;
     }
@@ -325,10 +325,10 @@ void BandAnalysisTask::calculateRefinedFrequencies(BandSpectrumData& output)
         float phaseCurrent = output.phases[i];
         float phasePrev = prevPhases_[i];
         
-        // 相位差
+        // Phase difference
         float phaseDiff = phaseCurrent - phasePrev;
         
-        // 解卷绕
+        // Unwrap
         float expectedPhaseDiff = twoPi * hopSize * i / config_.fftSize;
         phaseDiff -= expectedPhaseDiff;
         
@@ -337,11 +337,11 @@ void BandAnalysisTask::calculateRefinedFrequencies(BandSpectrumData& output)
         while (phaseDiff < -juce::MathConstants<float>::pi)
             phaseDiff += twoPi;
         
-        // 计算精化频率
+        // Calculate refined frequency
         float binFreq = output.frequencies[i];
         float refinedFreq = binFreq + phaseDiff * sampleRate / (twoPi * hopSize);
         
-        // 限制精化频率在合理范围内（bin频率的±50%）
+        // Limit refined frequency to reasonable range (±50% of bin freq)
         if (std::abs(refinedFreq - binFreq) > binFreq * 0.5f) {
             refinedFreq = binFreq;
         }
@@ -364,32 +364,32 @@ MultiResolutionAnalyzer::~MultiResolutionAnalyzer() = default;
 
 void MultiResolutionAnalyzer::setupDefaultConfigs()
 {
-    // 低频带：< 400Hz，长窗高频率精度
-    // 不使用YIN，仅依赖FFT（8192点提供5.4Hz分辨率，足够精确）
+    // Low band: < 400Hz, long window for high frequency precision
+    // No YIN, rely on FFT only (8192 points give 5.4Hz resolution, accurate enough)
     ResolutionBand low;
-    low.minFreq = 50.0f;      // 最低检测50Hz（最低音域）
-    low.maxFreq = 400.0f;     // 上限400Hz，与中频带无重叠
-    low.fftOrder = 13;        // 8192点
+    low.minFreq = 50.0f;      // Minimum 50Hz (lowest range)
+    low.maxFreq = 400.0f;     // Upper limit 400Hz, no overlap with mid band
+    low.fftOrder = 13;        // 8192 points
     low.hopSize = 512;
     low.windowType = ResolutionBand::Blackman;
     low.strategy = ResolutionBand::HighPrecision;
     
-    // 中频带：400-2000Hz，平衡设置
-    // 这是钢琴和弦的主要基频区域
+    // Mid band: 400-2000Hz, balanced settings
+    // This is main fundamental region for piano chords
     ResolutionBand mid;
-    mid.minFreq = 400.0f;     // 与低频带无重叠
-    mid.maxFreq = 2000.0f;    // 上限2000Hz，覆盖到C7
-    mid.fftOrder = 12;        // 4096点，10.8Hz分辨率
+    mid.minFreq = 400.0f;     // No overlap with low band
+    mid.maxFreq = 2000.0f;    // Upper limit 2000Hz, covers to C7
+    mid.fftOrder = 12;        // 4096 points, 10.8Hz resolution
     mid.hopSize = 512;
     mid.windowType = ResolutionBand::Hann;
     mid.strategy = ResolutionBand::Balanced;
     
-    // 高频带：2000-6000Hz，用于泛音验证
-    // 短窗快速响应，不用于基频检测
+    // High band: 2000-6000Hz, for overtone verification
+    // Short window for fast response, not for fundamental detection
     ResolutionBand high;
-    high.minFreq = 2000.0f;   // 与中频带无重叠
-    high.maxFreq = 6000.0f;   // 上限6000Hz
-    high.fftOrder = 11;       // 2048点，21.5Hz分辨率
+    high.minFreq = 2000.0f;   // No overlap with mid band
+    high.maxFreq = 6000.0f;   // Upper limit 6000Hz
+    high.fftOrder = 11;       // 2048 points, 21.5Hz resolution
     high.hopSize = 512;
     high.windowType = ResolutionBand::Hann;
     high.strategy = ResolutionBand::FastResponse;
@@ -418,15 +418,15 @@ void MultiResolutionAnalyzer::process(const juce::AudioBuffer<float>& input,
 {
     auto startTime = juce::Time::getHighResolutionTicks();
     
-    // 当前版本：顺序处理（为后续并行化预留结构）
+    // Current version: sequential processing (structure reserved for future parallelization)
     for (int i = 0; i < 3; ++i) {
         bandTasks_[i]->process(input, output.bands[i]);
     }
     
-    // 融合结果
+    // Merge results
     fuseSpectrums(output);
     
-    // 计算处理时间
+    // Calculate processing time
     auto endTime = juce::Time::getHighResolutionTicks();
     output.processingTimeMs = juce::Time::highResolutionTicksToSeconds(
         endTime - startTime) * 1000.0;
@@ -435,7 +435,7 @@ void MultiResolutionAnalyzer::process(const juce::AudioBuffer<float>& input,
 
 void MultiResolutionAnalyzer::fuseSpectrums(MultiResolutionData& data)
 {
-    // 构建统一的融合频谱
+    // Build unified merged spectrum
     const int totalBins = 2048;
     
     auto& fused = data.fusedSpectrum;
@@ -445,13 +445,13 @@ void MultiResolutionAnalyzer::fuseSpectrums(MultiResolutionData& data)
     fused.sampleRate = static_cast<float>(sampleRate_);
     fused.fftSize = totalBins * 2;
     
-    // 计算融合后的频率刻度
+    // Calculate merged frequency scale
     for (int i = 0; i < totalBins; ++i) {
         fused.frequencies[i] = i * sampleRate_ / (2.0 * totalBins);
     }
     
-    // 从各频带填充数据
-    // 低频 (<400Hz)
+    // Fill data from each band
+    // Low frequency (<400Hz)
     auto& low = data.lowBand();
     if (low.hasRefinedFreqs && !low.frequencies.empty()) {
         float lowBinWidth = low.frequencies[1] - low.frequencies[0];
@@ -469,7 +469,7 @@ void MultiResolutionAnalyzer::fuseSpectrums(MultiResolutionData& data)
         }
     }
     
-    // 中频 (400-2000Hz) - 使用YIN结果精化
+    // Mid frequency (400-2000Hz) - use YIN results for refinement
     auto& mid = data.midBand();
     if (mid.hasRefinedFreqs) {
         int midStart = static_cast<int>(400.0f * 2.0 * totalBins / sampleRate_);
@@ -483,7 +483,7 @@ void MultiResolutionAnalyzer::fuseSpectrums(MultiResolutionData& data)
             if (targetBin >= midStart && targetBin < midEnd && targetBin < totalBins) {
                 fused.magnitudes[targetBin] = mid.magnitudes[i];
                 
-                // 中频带优先使用YIN结果（如果有）
+                // Mid band prefers YIN results (if available)
                 if (mid.hasYinResult && mid.yinConfidence > 0.5f &&
                     std::abs(freq - mid.yinFrequency) / mid.yinFrequency < 0.03f) {
                     fused.refinedFreqs[targetBin] = mid.yinFrequency;
@@ -494,7 +494,7 @@ void MultiResolutionAnalyzer::fuseSpectrums(MultiResolutionData& data)
         }
     }
     
-    // 高频 (2000-6000Hz) - 仅用于泛音验证
+    // High frequency (2000-6000Hz) - for overtone verification only
     auto& high = data.highBand();
     if (high.hasRefinedFreqs) {
         int highStart = static_cast<int>(2000.0f * 2.0 * totalBins / sampleRate_);

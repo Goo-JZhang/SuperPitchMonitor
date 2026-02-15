@@ -178,7 +178,7 @@ bool FileAudioInput::loadFile(const juce::File& file)
     currentPosition_ = 0.0;
     currentFileName_ = file.getFileName();
     
-    // 详细日志：文件加载成功
+    // Detailed log: file loaded successfully
     SPM_LOG_INFO("[FileAudioInput] ====== FILE LOADED ======");
     SPM_LOG_INFO("[FileAudioInput] Filename: " + file.getFileName());
     SPM_LOG_INFO("[FileAudioInput] Full path: " + file.getFullPathName());
