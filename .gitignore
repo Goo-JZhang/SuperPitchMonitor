@@ -256,6 +256,7 @@ Docs/doctrees/
 ThirdParty/*
 !ThirdParty/.gitkeep
 !ThirdParty/README.md
+!ThirdParty/*.cmake
 
 # Legacy cache directories
 JUCE/
