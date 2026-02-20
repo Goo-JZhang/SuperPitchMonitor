@@ -174,47 +174,36 @@ void SpectrumDisplay::updateDynamicRange()
     
     // Min dB always follows target directly (or with slow decay if you want)
     currentMinDb_ = targetMin;
-    
-    
-    // Debug logging every 30 calls
-    static int dbgCount = 0;
-    if (++dbgCount % 30 == 0)
-    {
-        SPM_LOG_INFO("[SpectrumDisplay] dB Range: peakDb=" + juce::String(peakDb, 1)
-                     + " targetMax=" + juce::String(targetMax, 1)
-                     + " currentMax=" + juce::String(currentMaxDb_, 1));
-    }
 }
 
 void SpectrumDisplay::updateSpectrum(const SpectrumData& data)
 {
-    static int count = 0;
-    if (++count % 30 == 0)
+    juce::ScopedLock lock(dataLock_);
+    
+    if (std::abs(data.sampleRate - currentSampleRate_) > 1.0f)
     {
-        float maxMag = 0.0f;
-        for (auto& m : data.magnitudes)
-            maxMag = std::max(maxMag, m);
-        SPM_LOG_INFO("[SpectrumDisplay] updateSpectrum #" + juce::String(count)
-                     + " bins=" + juce::String(data.magnitudes.size())
-                     + " maxMag=" + juce::String(maxMag, 4)
-                     + " sampleRate=" + juce::String(data.sampleRate));
+        currentSampleRate_ = data.sampleRate;
     }
     
-    {
-        juce::ScopedLock lock(dataLock_);
-        
-        if (std::abs(data.sampleRate - currentSampleRate_) > 1.0f)
-        {
-            currentSampleRate_ = data.sampleRate;
-        }
-        
-        currentData_ = data;
-    }
+    currentData_ = data;
     
     // Update dynamic range
     updateDynamicRange();
     
     // Repaint will happen on next timer callback
+}
+
+void SpectrumDisplay::clear()
+{
+    juce::MessageManager::callAsync([this]() {
+        juce::ScopedLock lock(dataLock_);
+        currentData_.magnitudes.clear();
+        currentData_.mlConfidence.clear();
+        currentData_.mlEnergy.clear();
+        currentData_.isMLMode = false;
+        currentData_.isFFTMode = false;
+        repaint();
+    });
 }
 
 void SpectrumDisplay::paint(juce::Graphics& g)
@@ -224,6 +213,7 @@ void SpectrumDisplay::paint(juce::Graphics& g)
     drawGrid(g);
     drawNoteMarkers(g);
     drawSpectrum(g);
+    drawModeLabel(g);  // Draw mode indicator on top
 }
 
 void SpectrumDisplay::drawBackground(juce::Graphics& g)
@@ -243,28 +233,81 @@ void SpectrumDisplay::drawAxes(juce::Graphics& g)
     
     g.setColour(juce::Colours::white.withAlpha(0.6f));
     
-    // === Y Axis Labels (dB) ===
-    // Draw dB labels every 20 dB
-    float dbStep = 20.0f;
-    for (float db = std::ceil(currentMinDb_ / dbStep) * dbStep; db <= currentMaxDb_; db += dbStep)
+    // ML Mode: Dual Y-axes
+    if (currentData_.isMLMode)
     {
-        float y = dbToY(db);
-        if (y < plotArea.getY() || y > plotArea.getBottom()) continue;
+        // === Left Y Axis: Confidence (0.0, 0.2, 0.4, 0.6, 0.8, 1.0) ===
+        g.setColour(juce::Colours::lime.withAlpha(0.6f));
+        float confValues[] = {0.0f, 0.2f, 0.4f, 0.6f, 0.8f, 1.0f};
+        for (float conf : confValues)
+        {
+            float y = plotArea.getBottom() - conf * plotArea.getHeight();
+            if (y < plotArea.getY() || y > plotArea.getBottom()) continue;
+            
+            g.drawLine(plotArea.getX() - 5, y, plotArea.getX(), y);
+            
+            g.setColour(juce::Colours::lime.withAlpha(0.6f));
+            // Fixed one decimal place for all values (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
+            juce::String label = juce::String(conf, 1);
+            g.drawText(label, 2, (int)y - 6, leftMargin - 10, 12, 
+                      juce::Justification::centredRight);
+            g.setColour(juce::Colours::lime.withAlpha(0.6f));
+        }
         
-        g.drawLine(plotArea.getX() - 5, y, plotArea.getX(), y);
-        
-        g.setColour(juce::Colours::white.withAlpha(0.5f));
-        juce::String label = juce::String((int)db);
-        g.drawText(label, 2, (int)y - 6, leftMargin - 8, 12, 
+        // Left Y axis title (at top, not overlapping with labels)
+        g.setColour(juce::Colours::lime.withAlpha(0.8f));
+        g.setFont(10.0f);
+        g.drawText("Confidence", 2, plotArea.getY() - 18, leftMargin - 4, 14,
                   juce::Justification::centredRight);
-        g.setColour(juce::Colours::white.withAlpha(0.6f));
+        
+        // === Right Y Axis: Energy (0.0, 0.2, 0.4, 0.6, 0.8, 1.0) ===
+        g.setColour(juce::Colours::orange.withAlpha(0.6f));
+        float energyValues[] = {0.0f, 0.2f, 0.4f, 0.6f, 0.8f, 1.0f};
+        for (float e : energyValues)
+        {
+            float y = plotArea.getBottom() - e * plotArea.getHeight();
+            if (y < plotArea.getY() || y > plotArea.getBottom()) continue;
+            
+            g.drawLine(plotArea.getRight(), y, plotArea.getRight() + 5, y);
+            
+            g.setColour(juce::Colours::orange.withAlpha(0.6f));
+            // Fixed one decimal place for all values
+            juce::String label = juce::String(e, 1);
+            g.drawText(label, plotArea.getRight() + 8, (int)y - 6, 40, 12, 
+                      juce::Justification::centredLeft);
+            g.setColour(juce::Colours::orange.withAlpha(0.6f));
+        }
+        
+        // Right Y axis title (at top)
+        g.setColour(juce::Colours::orange.withAlpha(0.8f));
+        g.setFont(10.0f);
+        g.drawText("Energy", plotArea.getRight() + 8, plotArea.getY() - 18, 40, 14,
+                  juce::Justification::centredLeft);
     }
-    
-    // Y axis title
-    g.setColour(juce::Colours::white.withAlpha(0.5f));
-    g.setFont(9.0f);
-    g.drawText("dB", 2, plotArea.getY() - 8, leftMargin - 4, 12,
-              juce::Justification::centred);
+    else
+    {
+        // === FFT Mode: Single Y Axis (dB) ===
+        float dbStep = 20.0f;
+        for (float db = std::ceil(currentMinDb_ / dbStep) * dbStep; db <= currentMaxDb_; db += dbStep)
+        {
+            float y = dbToY(db);
+            if (y < plotArea.getY() || y > plotArea.getBottom()) continue;
+            
+            g.drawLine(plotArea.getX() - 5, y, plotArea.getX(), y);
+            
+            g.setColour(juce::Colours::white.withAlpha(0.5f));
+            juce::String label = juce::String((int)db);
+            g.drawText(label, 2, (int)y - 6, leftMargin - 8, 12, 
+                      juce::Justification::centredRight);
+            g.setColour(juce::Colours::white.withAlpha(0.6f));
+        }
+        
+        // Y axis title
+        g.setColour(juce::Colours::white.withAlpha(0.5f));
+        g.setFont(9.0f);
+        g.drawText("dB", 2, plotArea.getY() - 8, leftMargin - 4, 12,
+                  juce::Justification::centred);
+    }
     
     // === X Axis Labels (Frequency) ===
     if (useLogScale_)
@@ -387,13 +430,24 @@ void SpectrumDisplay::drawSpectrum(juce::Graphics& g)
 {
     juce::ScopedLock lock(dataLock_);
     
-    if (currentData_.magnitudes.empty()) return;
-    
     auto plotArea = getPlotArea();
+    
+    // ML Mode: Draw confidence and energy with dual Y-axes
+    if (currentData_.isMLMode && !currentData_.mlConfidence.empty())
+    {
+        drawMLSpectrum(g);
+        return;
+    }
+    
+    // FFT Mode or legacy mode: Draw single magnitude spectrum
+    if (currentData_.magnitudes.empty()) return;
     
     int numBins = (int)currentData_.magnitudes.size();
     float sampleRate = currentData_.sampleRate > 0 ? currentData_.sampleRate : 44100.0f;
-    float binWidth = (sampleRate / 2.0f) / numBins;
+    
+    // FIX: Correct bin width calculation
+    int fftSize = currentData_.fftSize > 0 ? currentData_.fftSize : 2 * (numBins - 1);
+    float binWidth = sampleRate / fftSize;
     
     juce::Path spectrumPath;
     bool firstPoint = true;
@@ -401,7 +455,9 @@ void SpectrumDisplay::drawSpectrum(juce::Graphics& g)
     // Build spectrum path
     for (int i = 0; i < numBins; ++i)
     {
-        float freq = i * binWidth;
+        float freq = (i < (int)currentData_.frequencies.size()) 
+                     ? currentData_.frequencies[i] 
+                     : i * binWidth;
         if (freq < minFreq_ || freq > maxFreq_) continue;
         
         float x = freqToX(freq);
@@ -442,6 +498,132 @@ void SpectrumDisplay::drawSpectrum(juce::Graphics& g)
     }
 }
 
+void SpectrumDisplay::drawMLSpectrum(juce::Graphics& g)
+{
+    auto plotArea = getPlotArea();
+    
+    // Leave some padding at top for axis labels
+    float topPadding = 20.0f;
+    float effectiveHeight = plotArea.getHeight() - topPadding;
+    
+    int numBins = (int)currentData_.mlConfidence.size();
+    if (numBins == 0) return;
+    
+    // ML model valid frequency range
+    const float mlMinFreq = 20.0f;
+    const float mlMaxFreq = 5000.0f;
+    
+    // Left Y-axis: Confidence (0-1, mapped to effective plot area)
+    juce::Path confidencePath;
+    bool firstPoint = true;
+    
+    for (int i = 0; i < numBins; ++i)
+    {
+        if (i >= (int)currentData_.frequencies.size()) continue;
+        
+        float freq = currentData_.frequencies[i];
+        
+        // Skip if outside display range
+        if (freq < minFreq_ || freq > maxFreq_) continue;
+        
+        // For ML mode: values outside 20-5000Hz are invalid and should be 0
+        float confidence = 0.0f;
+        if (freq >= mlMinFreq && freq <= mlMaxFreq && i < (int)currentData_.mlConfidence.size())
+        {
+            confidence = currentData_.mlConfidence[i];
+        }
+        
+        float x = freqToX(freq);
+        float y = plotArea.getBottom() - confidence * effectiveHeight;
+        y = juce::jlimit((float)plotArea.getY() + topPadding, (float)plotArea.getBottom(), y);
+        
+        if (firstPoint)
+        {
+            confidencePath.startNewSubPath(x, (float)plotArea.getBottom());
+            confidencePath.lineTo(x, y);
+            firstPoint = false;
+        }
+        else
+        {
+            confidencePath.lineTo(x, y);
+        }
+    }
+    
+    // Close and fill confidence path
+    if (!confidencePath.isEmpty())
+    {
+        confidencePath.lineTo(plotArea.getRight(), (float)plotArea.getBottom());
+        confidencePath.closeSubPath();
+        
+        // Fill with green gradient (confidence)
+        juce::ColourGradient fillGradient(
+            juce::Colours::lime.withAlpha(0.5f), plotArea.getX(), plotArea.getY() + topPadding,
+            juce::Colours::lime.withAlpha(0.05f), plotArea.getX(), plotArea.getBottom(),
+            false
+        );
+        g.setGradientFill(fillGradient);
+        g.fillPath(confidencePath);
+        
+        // Draw outline
+        g.setColour(juce::Colours::lime.withAlpha(0.8f));
+        g.strokePath(confidencePath, juce::PathStrokeType(1.5f));
+    }
+    
+    // Right Y-axis: Energy (mapped separately)
+    if (!currentData_.mlEnergy.empty())
+    {
+        juce::Path energyPath;
+        firstPoint = true;
+        
+        // Find max energy for normalization (only within valid ML range)
+        float maxEnergy = 0.001f;
+        for (int i = 0; i < numBins && i < (int)currentData_.mlEnergy.size(); ++i)
+        {
+            if (i >= (int)currentData_.frequencies.size()) continue;
+            float freq = currentData_.frequencies[i];
+            if (freq >= mlMinFreq && freq <= mlMaxFreq)
+                maxEnergy = juce::jmax(maxEnergy, currentData_.mlEnergy[i]);
+        }
+        
+        for (int i = 0; i < numBins && i < (int)currentData_.mlEnergy.size(); ++i)
+        {
+            if (i >= (int)currentData_.frequencies.size()) continue;
+            
+            float freq = currentData_.frequencies[i];
+            if (freq < minFreq_ || freq > maxFreq_) continue;
+            
+            // For ML mode: values outside 20-5000Hz are invalid and should be 0
+            float normalizedEnergy = 0.0f;
+            if (freq >= mlMinFreq && freq <= mlMaxFreq)
+            {
+                normalizedEnergy = currentData_.mlEnergy[i] / maxEnergy;
+            }
+            
+            float x = freqToX(freq);
+            float y = plotArea.getBottom() - normalizedEnergy * effectiveHeight * 0.7f;
+            y = juce::jlimit((float)plotArea.getY() + topPadding, (float)plotArea.getBottom(), y);
+            
+            if (firstPoint)
+            {
+                energyPath.startNewSubPath(x, (float)plotArea.getBottom());
+                energyPath.lineTo(x, y);
+                firstPoint = false;
+            }
+            else
+            {
+                energyPath.lineTo(x, y);
+            }
+        }
+        
+        // Draw energy outline (no fill to avoid obscuring confidence)
+        if (!energyPath.isEmpty())
+        {
+            g.setColour(juce::Colours::orange.withAlpha(0.9f));
+            g.strokePath(energyPath, juce::PathStrokeType(2.0f));
+        }
+    }
+}
+
 void SpectrumDisplay::setTargetRefreshRate(int fps)
 {
     targetFPS_ = fps;
@@ -450,6 +632,59 @@ void SpectrumDisplay::setTargetRefreshRate(int fps)
     // Note: SpectrumDisplay doesn't use a timer, it updates on data arrival
     // The FPS limit is effectively applied by the pitch display timer
     // which triggers repaints at the target rate
+}
+
+void SpectrumDisplay::drawModeLabel(juce::Graphics& g)
+{
+    juce::ScopedLock lock(dataLock_);
+    
+    auto plotArea = getPlotArea();
+    
+    // Mode indicator in bottom-left corner
+    juce::String label;
+    juce::Colour color;
+    juce::String subtext;
+    
+    if (currentData_.isMLMode)
+    {
+        label = "ML MODE";
+        color = juce::Colours::lime;
+        subtext = "Base frequency distribution only";
+    }
+    else if (currentData_.isFFTMode)
+    {
+        label = "FFT MODE";
+        color = juce::Colours::cyan;
+        subtext = "Traditional FFT spectrum";
+    }
+    else
+    {
+        return; // Unknown mode, don't draw
+    }
+    
+    // Draw semi-transparent background in bottom-left
+    int labelWidth = 160;
+    int labelHeight = 32;
+    int x = plotArea.getX() + 10;
+    int y = plotArea.getBottom() - labelHeight - 10;
+    
+    // More transparent background so spectrum curve shows through
+    g.setColour(juce::Colours::black.withAlpha(0.35f));
+    g.fillRoundedRectangle(x, y, labelWidth, labelHeight, 6);
+    
+    // Semi-transparent border
+    g.setColour(color.withAlpha(0.5f));
+    g.drawRoundedRectangle(x, y, labelWidth, labelHeight, 6, 1.0f);
+    
+    // Draw main label with slight transparency
+    g.setColour(color.withAlpha(0.9f));
+    g.setFont(juce::Font(11.0f, juce::Font::bold));
+    g.drawText(label, x, y + 3, labelWidth, 14, juce::Justification::centred);
+    
+    // Draw subtext with more transparency
+    g.setColour(juce::Colours::white.withAlpha(0.75f));
+    g.setFont(juce::Font(8.0f));
+    g.drawText(subtext, x, y + 16, labelWidth, 12, juce::Justification::centred);
 }
 
 } // namespace spm

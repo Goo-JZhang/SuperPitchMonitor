@@ -184,13 +184,43 @@ void MainComponent::connectSettingsCallbacks()
         SPM_LOG_INFO("[Settings] FPS changed to: " + juce::String(fps < 0 ? "Unlimited" : juce::String(fps) + " Hz"));
     });
     
-    // Multi-resolution analysis toggle
-    content->onMultiResChanged([this](bool enabled) {
+    // Buffer Size changes
+    content->onBufferSizeChanged([this](int bufferSize) {
         if (audioEngine_)
         {
-            audioEngine_->setMultiResolutionEnabled(enabled);
+            audioEngine_->setBufferSize(bufferSize);
         }
-        SPM_LOG_INFO("[Settings] Multi-resolution analysis: " + juce::String(enabled ? "enabled" : "disabled"));
+        float latencyMs = (bufferSize / 44100.0f) * 1000.0f;
+        SPM_LOG_INFO("[Settings] Buffer size changed to: " + juce::String(bufferSize) + 
+                     " samples (" + juce::String(latencyMs, 1) + " ms)");
+    });
+    
+    // ML Analysis toggle
+    content->onMLAnalyzeChanged([this](bool enabled) {
+        if (audioEngine_)
+        {
+            audioEngine_->setMLAnalysisEnabled(enabled);
+        }
+        SPM_LOG_INFO("[Settings] ML Analysis: " + juce::String(enabled ? "enabled" : "disabled"));
+    });
+    
+    // ML GPU/CPU mode toggle
+    content->onMLModeChanged([this](bool useGPU) {
+        if (audioEngine_)
+        {
+            audioEngine_->setMLGPUEnabled(useGPU);
+        }
+        SPM_LOG_INFO("[Settings] ML Mode: " + juce::String(useGPU ? "GPU" : "CPU"));
+    });
+    
+    // ML Model selection
+    content->onMLModelChanged([this](const juce::String& modelPath) {
+        SPM_LOG_INFO("[Settings] ML Model selected: " + modelPath);
+        if (audioEngine_)
+        {
+            // Reload ML detector with new model
+            audioEngine_->setMLModelPath(modelPath);
+        }
     });
 }
 
@@ -266,8 +296,8 @@ void MainComponent::setupAudio()
         if (spectrumDisplay_) spectrumDisplay_->setTargetRefreshRate(fps);
         
         // Auto-enable multi-resolution for testing
-        content->setMultiResolutionEnabled(true);
-        audioEngine_->setMultiResolutionEnabled(true);
+        content->setMLAnalysisEnabled(true);
+        audioEngine_->setMLAnalysisEnabled(true);
         SPM_LOG_INFO("[MainComponent] Auto-enabled multi-resolution analysis");
     }
     
@@ -360,6 +390,8 @@ void MainComponent::buttonClicked(juce::Button* button)
                 pitchWaterfall_->clear();
             if (pitchDisplay_)
                 pitchDisplay_->clear();
+            if (spectrumDisplay_)
+                spectrumDisplay_->clear();
         }
         else
         {
@@ -367,7 +399,7 @@ void MainComponent::buttonClicked(juce::Button* button)
             SPM_LOG_INFO("========================================");
             SPM_LOG_INFO("[START] ====== DETECTION STARTED ======");
             SPM_LOG_INFO("[START] Input Source: " + audioEngine_->getInputSourceName());
-            SPM_LOG_INFO("[START] Multi-resolution: " + juce::String(audioEngine_->isMultiResolutionEnabled() ? "ON" : "OFF"));
+            SPM_LOG_INFO("[START] ML Analysis: " + juce::String(audioEngine_->isMLAnalysisEnabled() ? "ON" : "OFF"));
             
             // Get SettingsPanel configuration
             if (settingsPanel_ && settingsPanel_->getContent())

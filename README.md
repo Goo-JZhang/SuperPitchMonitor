@@ -4,10 +4,19 @@ A real-time polyphonic pitch detection and visualization application based on th
 
 ## Features
 
+- **Machine Learning Pitch Detection** (NEW): Neural network-based pitch detection using ONNX Runtime
+  - Dual-output: Confidence (基频概率) + Energy (强度)
+  - GPU acceleration: CoreML (macOS), CUDA (Windows), NNAPI (Android)
+  - 4096 samples input → 2048 frequency bins output (20-5000Hz)
+  - ML/FFT mode toggle at runtime
+  
 - **Real-time Pitch Detection**: Monophonic and polyphonic pitch detection
 - **Multi-resolution Analysis**: Adaptive FFT resolution for different frequency bands
 - **Cross-platform**: Windows, macOS, Linux, Android, iOS
-- **Visual Feedback**: Spectrum display, pitch waterfall, and pitch cards
+- **Visual Feedback**: 
+  - Spectrum display (ML模式: 双纵轴 Confidence/Energy | FFT模式: dB频谱)
+  - Pitch waterfall (历史音高散点图)
+  - Pitch cards (音名 + cents偏差 + 强度)
 - **Test Framework**: Python-based automated testing with FFT reference analysis
 
 ## Quick Start
@@ -20,40 +29,44 @@ Choose your platform and build type:
 
 ```powershell
 # Release build (default)
-scripts\build\setup_windows.bat
-# or
-scripts\build\setup_windows.bat Release
+cd scripts\build
+build_windows.bat
 
 # Debug build
-scripts\build\setup_windows.bat Debug
+build_windows.bat Debug
 
-# Quick build (without setup)
-scripts\build\build_release.bat
-scripts\build\build_debug.bat
+# Custom build directory
+build_windows.bat Release build-custom
 ```
 
 #### macOS
 
 ```bash
-# Release build
-chmod +x scripts/build/build_release.sh
-scripts/build/build_release.sh
+# Release build (default)
+cd scripts/build
+chmod +x build_macos.sh
+./build_macos.sh
 
 # Debug build
-chmod +x scripts/build/build_debug.sh
-scripts/build/build_debug.sh
+./build_macos.sh Debug
+
+# Custom build directory
+./build_macos.sh Release build-custom
 ```
 
 #### Linux
 
 ```bash
-# Release build
-chmod +x scripts/build/build_release.sh
-scripts/build/build_release.sh
+# Release build (default)
+cd scripts/build
+chmod +x build_linux.sh
+./build_linux.sh
 
 # Debug build
-chmod +x scripts/build/build_debug.sh
-scripts/build/build_debug.sh
+./build_linux.sh Debug
+
+# Custom build directory
+./build_linux.sh Release build-custom
 ```
 
 ## Manual Build Guide
@@ -126,6 +139,20 @@ cmake --build . -j$(nproc)
 
 See [Android Build Guide](Docs/07_Build/BuildGuide.md)
 
+### ML Build Options
+
+```bash
+# Option 1: Build ONNX Runtime from source (recommended for macOS CoreML)
+# - Full operator support, includes Split, Resize, etc.
+# - Takes 20-30 minutes (similar to JUCE first build)
+# - Enables CoreML/CUDA/DirectML GPU acceleration
+cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_ONNXRUNTIME_FROM_SOURCE=ON
+
+# Option 2: Use pre-built ONNX Runtime (faster, ~1 min)
+# - Limited operator support, may not work with all models
+cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_ONNXRUNTIME_FROM_SOURCE=OFF
+```
+
 ## Project Structure
 
 ```
@@ -152,18 +179,26 @@ SuperPitchMonitor/
 ├── Docs/                       # Documentation
 │   ├── 01_TechnicalAnalysis/  # Technical analysis
 │   ├── 02_Architecture/       # Architecture docs
-│   ├── 07_Build/              # Build guides
-│   └── test_reports/          # Test reports
+│   ├── 06_Development/        # Development guides
+│   └── ...                    # Other documentation
+│
+├── scripts/                    # Build and utility scripts
+│   ├── build/                 # Cross-platform build scripts
+│   │   ├── build_macos.sh     # macOS build script
+│   │   ├── build_windows.bat  # Windows build script
+│   │   ├── build_linux.sh     # Linux build script
+│   │   └── README.md          # Build documentation
+│   ├── test/                  # Test scripts
+│   └── audio/                 # Audio generation scripts
 │
 ├── ThirdParty/                 # External dependencies cache (downloaded by CMake)
-│   ├── juce-src/              # JUCE framework (auto-downloaded)
-│   └── ...                    # Future dependencies
+│   └── juce-src/              # JUCE framework (auto-downloaded)
 │
 ├── Saved/                      # Runtime generated data (not in git)
 │   └── Logs/                  # Application runtime logs
 │
 └── build-*/                    # Build directories (platform-specific, generated)
-    └── logs/                  # Build logs (for debugging build failures)
+    └── build_*.log            # Build logs (for debugging build failures)
 ```
 
 ## Testing
@@ -337,7 +372,7 @@ git push origin main
 ### Logs Location
 
 - **Runtime Logs**: `Saved/Logs/*.log` - Application execution logs
-- **Build Logs**: `build-*/logs/*.log` - CMake and compilation logs (useful for debugging build failures)
+- **Build Logs**: `build-*/build_*.log` - CMake and compilation logs (useful for debugging build failures)
 
 ### Executable Output
 

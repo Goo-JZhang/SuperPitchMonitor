@@ -1,64 +1,55 @@
 # Third Party Dependencies
 
-This directory is used by CMake FetchContent to cache external dependencies.
+This directory manages external dependencies that are automatically downloaded during the build process.
 
-## How It Works
+## ONNX Runtime
 
-When you build the project for the first time, CMake will automatically download dependencies (like JUCE) into this directory. This cache persists even when you clean the build directories (`build-windows/`, `build-macos/`, etc.).
+ONNX Runtime is automatically downloaded and configured by CMake.
 
-## Directory Structure
+### Automatic Download
 
-```
-ThirdParty/
-├── .gitkeep              # Keeps directory in git
-├── README.md             # This file
-└── juce-src/             # JUCE framework (downloaded automatically)
-    ├── CMakeLists.txt
-    ├── modules/
-    └── ...
-```
+When you run CMake, it will automatically:
+1. Download the platform-specific ONNX Runtime pre-built package
+2. Extract it to `ThirdParty/onnxruntime-bin/`
+3. Download additional headers for GPU support (if needed)
+4. Configure include and library paths
 
-## Cached Dependencies
+### Platform-Specific Packages
 
-| Dependency | Version | Source |
-|------------|---------|--------|
-| JUCE       | 7.0.12  | https://github.com/juce-framework/JUCE |
+| Platform | Package | GPU Support |
+|----------|---------|-------------|
+| macOS ARM64 | `onnxruntime-osx-arm64-*.tgz` | CoreML (optional) |
+| macOS x86_64 | `onnxruntime-osx-x86_64-*.tgz` | CPU only |
+| Windows x64 | `onnxruntime-win-x64-*.zip` | DirectML (optional) |
+| Linux x64 | `onnxruntime-linux-x64-*.tgz` | CPU only |
+| Android | `onnxruntime-android-*.aar` | NNAPI |
 
-## Management
+### Forcing GPU Version
 
-### Clean Cache
-
-If you need to force re-download dependencies:
+To use the GPU-accelerated version, set the CMake option:
 
 ```bash
-# Delete specific dependency
-rm -rf ThirdParty/juce-src
-
-# Or delete entire cache
-rm -rf ThirdParty/*
-touch ThirdParty/.gitkeep  # Restore marker file
+cmake .. -DUSE_GPU_ONNXRUNTIME=ON
 ```
 
-### Add New Dependencies
+### Manual Override
 
-To add a new dependency, edit `CMakeLists.txt`:
+If you want to use a locally installed ONNX Runtime instead of the automatic download:
 
-```cmake
-FetchContent_Declare(
-    NewLibrary
-    GIT_REPOSITORY https://github.com/user/repo.git
-    GIT_TAG v1.0.0
-    GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(NewLibrary)
+```bash
+cmake .. -DONNXRUNTIME_ROOT=/path/to/your/onnxruntime
 ```
 
-The new library will be automatically downloaded to `ThirdParty/repo-src/`.
+### Troubleshooting
 
-## Git
+**Download fails**: Check your internet connection and try again. CMake will retry on the next run.
 
-This directory is in `.gitignore` - downloaded libraries are **not** committed to the repository. Only `.gitkeep` and `README.md` are tracked.
+**GPU not available**: The standard pre-built packages may not include GPU support. Check the logs for available execution providers. To get GPU support:
+- Build ONNX Runtime from source with the appropriate EP flag
+- Or download the specific GPU-enabled package from GitHub releases
 
-## Offline Builds
+## Build Output
 
-Once dependencies are cached here, you can build offline. The cache is shared across all build configurations (Debug/Release, different platforms).
+Downloaded files are cached in:
+- Source: `ThirdParty/onnxruntime-bin/<version>/`
+- No need to commit these to git (already in .gitignore)

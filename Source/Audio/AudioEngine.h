@@ -13,8 +13,10 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_dsp/juce_dsp.h>
 #include "../Utils/Config.h"
+#include "../Algorithms/FFTUtils.h"
 #include "AudioInputSource.h"
 #include "SpectrumData.h"
+#include "../MLAlgorithm/MLPitchDetector.h"
 
 // Forward declarations
 namespace spm { class AudioSimulator; }
@@ -24,11 +26,6 @@ namespace spm {
 // Forward declarations
 class SpectrumAnalyzer;
 class PolyphonicDetector;
-class MultiResolutionAnalyzer;
-
-// Band Spectrum Data (for multi-resolution analysis)
-struct BandSpectrumData;
-struct MultiResolutionData;
 
 /**
  * Audio Engine
@@ -79,9 +76,20 @@ public:
     void setQualityLevel(Config::Performance::QualityLevel level);
     void setDetectionRange(float minFreq, float maxFreq);
     
-    // Multi-resolution analysis control
-    void setMultiResolutionEnabled(bool enabled);
-    bool isMultiResolutionEnabled() const { return useMultiResolution_; }
+    // ML Analysis control
+    void setMLAnalysisEnabled(bool enabled);
+    bool isMLAnalysisEnabled() const { return useMLAnalysis_; }
+    
+    // ML GPU/CPU mode control
+    void setMLGPUEnabled(bool enabled);
+    bool isMLGPUEnabled() const { return useMLGPU_; }
+    
+    // Buffer size control
+    void setBufferSize(int newBufferSize);
+    
+    // ML Model path control
+    void setMLModelPath(const juce::String& modelPath);
+    juce::String getMLModelPath() const { return mlModelPath_; }
     
     // Get current configuration
     double getSampleRate() const { return sampleRate_; }
@@ -123,11 +131,12 @@ private:
     // Processing components
     std::unique_ptr<SpectrumAnalyzer> spectrumAnalyzer_;
     std::unique_ptr<PolyphonicDetector> polyphonicDetector_;
-    std::unique_ptr<MultiResolutionAnalyzer> multiResAnalyzer_;
+    std::unique_ptr<MLPitchDetector> mlDetector_;
     
-    // Multi-resolution mode
-    bool useMultiResolution_ = false;
-    std::unique_ptr<MultiResolutionData> multiResData_;
+    // ML Analysis mode
+    bool useMLAnalysis_ = true;  // Default ON
+    bool useMLGPU_ = true;       // Default GPU ON
+    juce::String mlModelPath_;   // Current model path
     
     // Circular buffer (used in RealDevice mode)
     static constexpr int FIFOSize = 8;
@@ -135,6 +144,13 @@ private:
     juce::HeapBlock<juce::AudioBuffer<float>> audioBuffers_;
     std::atomic<int> writeIndex_{0};
     std::atomic<int> readIndex_{0};
+    
+    // ML sliding window buffer - stores recent audio for 4096-sample inference
+    static constexpr int MLWindowSize = 4096 * 2;  // 8192 samples (2x for safety)
+    std::vector<float> mlRingBuffer_;   // Large ring buffer for history
+    std::vector<float> mlInputBuffer_;  // 4096 samples extracted for inference
+    std::atomic<int> mlWritePos_{0};
+    static constexpr int MLInputSize = 4096;
     
     // Input level smoother
     juce::LinearSmoothedValue<float> inputLevel_{0.0f};

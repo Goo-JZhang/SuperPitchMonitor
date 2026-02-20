@@ -85,6 +85,12 @@ void PitchCard::paint(juce::Graphics& g)
 {
     juce::ScopedLock lock(lock_);
     
+    // Don't paint if no valid data
+    if (data_.frequency < 20.0f || data_.confidence < 0.01f)
+    {
+        return;
+    }
+    
     auto bounds = getLocalBounds().toFloat().reduced(2.0f);
     
     // Background color based on confidence
@@ -102,8 +108,11 @@ void PitchCard::paint(juce::Graphics& g)
     g.setColour(juce::Colours::white);
     g.setFont(20.0f);
     
-    int noteIndex = (int)data_.midiNote % 12;
-    int octave = (int)data_.midiNote / 12 - 1;
+    // Safe MIDI note calculation (handle negative values)
+    int midiNoteInt = (int)std::round(data_.midiNote);
+    int noteIndex = ((midiNoteInt % 12) + 12) % 12;  // Ensure positive
+    int octave = midiNoteInt / 12 - 1;
+    if (midiNoteInt < 0) octave = (midiNoteInt - 11) / 12 - 1;  // Fix negative octave
     const char* noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
     
     juce::String noteText = juce::String(noteNames[noteIndex]) + juce::String(octave);
@@ -124,13 +133,27 @@ void PitchCard::paint(juce::Graphics& g)
     g.setColour(centsColour);
     g.drawText(centsText, bounds.removeFromTop(20).reduced(4), juce::Justification::centredLeft);
     
-    // dB level (amplitude)
+    // Energy/Amplitude display
     g.setFont(11.0f);
-    float db = 20.0f * std::log10(data_.amplitude + 0.0001f);
-    juce::String dbText = juce::String::formatted("%.1f dB", db);
-    g.setColour(db > -40.0f ? juce::Colours::lightgreen : 
-                db > -60.0f ? juce::Colours::yellow : juce::Colours::grey);
-    g.drawText(dbText, bounds.removeFromTop(20).reduced(4), juce::Justification::centredLeft);
+    juce::String ampText;
+    juce::Colour ampColour;
+    if (data_.isMLEnergy)
+    {
+        // ML mode: show energy directly (normalized to 0-2 range typically)
+        ampText = juce::String::formatted("E: %.2f", data_.amplitude);
+        ampColour = data_.amplitude > 1.0f ? juce::Colours::lightgreen : 
+                    data_.amplitude > 0.5f ? juce::Colours::yellow : juce::Colours::grey;
+    }
+    else
+    {
+        // FFT mode: show dB
+        float db = 20.0f * std::log10(data_.amplitude + 0.0001f);
+        ampText = juce::String::formatted("%.1f dB", db);
+        ampColour = db > -40.0f ? juce::Colours::lightgreen : 
+                    db > -60.0f ? juce::Colours::yellow : juce::Colours::grey;
+    }
+    g.setColour(ampColour);
+    g.drawText(ampText, bounds.removeFromTop(20).reduced(4), juce::Justification::centredLeft);
     
     // Confidence bar
     float barY = bounds.getCentreY();

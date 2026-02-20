@@ -1,0 +1,34 @@
+# 模型元数据
+Model Name: PitchNetBaseline
+Export Time: 20260219_230906
+ONNX File: PitchNetBaseline_20260219_230906.onnx
+
+# 模型架构
+Total Parameters: 5,177,280 (5.18M)
+Input Shape: [batch, 1, 4096]
+Output Shape: [batch, 2048, 2]  # [confidence, energy]
+
+# 训练信息
+Dataset: TrainingData/SingleSanity (102,400 samples)
+Dataset Config: 2048 bins x 50 samples, randomized freq + phase
+Total Epochs: 50
+Batch Size: 64
+Learning Rate: 0.001
+LR Schedule: CosineAnnealingWarmRestarts (T_0=10)
+Final Val Loss: 0.191000
+Best Epoch: 50
+Device: mps
+Platform: macOS Apple Silicon
+
+# 文件位置
+- ONNX: /Users/zhangjinlin/Project/SuperPitchMonitor/MLModel/PitchNetBaseline_20260219_230906.onnx
+- Meta: /Users/zhangjinlin/Project/SuperPitchMonitor/MLModel/PitchNetBaseline_20260219_230906.txt
+
+# 使用示例
+import onnxruntime as ort
+import numpy as np
+
+session = ort.InferenceSession("PitchNetBaseline_20260219_230906.onnx")
+input_data = np.random.randn(1, 1, 4096).astype(np.float32)
+output = session.run(None, {'input': input_data})
+# output[0].shape = [1, 2048, 2]

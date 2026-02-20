@@ -147,6 +147,7 @@ private:
     
     // Phase vocoder history
     std::vector<float> prevPhases_;
+    bool firstFrame_ = true;
     
     // Circular buffer (supports sliding window)
     juce::AudioBuffer<float> circularBuffer_;

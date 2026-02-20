@@ -231,6 +231,7 @@ void PitchWaterfallDisplay::updatePitches(const PitchVector& pitches)
                 hist.confidence = pitch.confidence;
                 hist.frequency = pitch.frequency;
                 hist.amplitude = pitch.amplitude;
+                hist.isMLEnergy = pitch.isMLEnergy;
                 hist.hasPitch = true;
                 
                 pitchHistory_.push_back(hist);
@@ -457,7 +458,21 @@ void PitchWaterfallDisplay::drawPitchHistory(juce::Graphics& g)
             
             // Normalize confidence and amplitude to 0-1 range
             float confNorm = juce::jlimit(0.0f, 1.0f, hist.confidence);
-            float ampNorm = juce::jlimit(0.0f, 1.0f, hist.amplitude / 200.0f);  // Normalize to typical max
+            float ampNorm;
+            
+            if (hist.isMLEnergy)
+            {
+                // ML mode: energy is already in relative scale (0-2 typical range)
+                // Use logarithmic scaling for better dynamic range
+                ampNorm = juce::jlimit(0.0f, 1.0f, hist.amplitude / 2.0f);
+                // Apply log curve: low energy still visible, high energy saturates gracefully
+                ampNorm = std::sqrt(ampNorm);  // sqrt for better low-level visibility
+            }
+            else
+            {
+                // FFT mode: amplitude is in dB range, normalize to typical max (200)
+                ampNorm = juce::jlimit(0.0f, 1.0f, hist.amplitude / 200.0f);
+            }
             
             // Four-quadrant display strategy:
             // Size: High conf = small (precise), Low conf = large (uncertain)

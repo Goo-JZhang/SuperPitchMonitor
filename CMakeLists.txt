@@ -4,9 +4,15 @@ cmake_minimum_required(VERSION 3.15)
 # Third Party Dependencies Setup
 #==============================================================================
 
-# Set external cache directory for FetchContent
-# This prevents re-downloading dependencies when build directory is cleaned
-set(FETCHCONTENT_BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty" CACHE PATH "External dependencies cache directory")
+#==============================================================================
+# Third Party Dependencies Setup
+#==============================================================================
+
+# JUCE uses FetchContent and will be stored in ThirdParty/juce/
+set(FETCHCONTENT_BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/juce" CACHE PATH "External dependencies cache directory")
+
+# ONNX Runtime paths (source build)
+set(ONNXRUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/onnxruntime" CACHE PATH "ONNX Runtime directory")
 
 #==============================================================================
 # SuperPitchMonitor CMake Configuration
@@ -129,6 +135,11 @@ target_sources(SuperPitchMonitor PRIVATE
     # Test
     Source/Test/TestServer.cpp
     Source/Test/TestServer.h
+    
+    # ML Algorithm
+    Source/MLAlgorithm/MLPitchDetector.cpp
+    Source/MLAlgorithm/MLPitchDetector.h
+    Source/MLAlgorithm/RingBuffer.h
 )
 
 #==============================================================================
@@ -174,6 +185,64 @@ target_link_libraries(SuperPitchMonitor PRIVATE
 
 target_include_directories(SuperPitchMonitor PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Source
+)
+
+#==============================================================================
+# ONNX Runtime (Build from Source - Like JUCE)
+#==============================================================================
+option(BUILD_ONNXRUNTIME_FROM_SOURCE "Build ONNX Runtime from source (20-30 min, full GPU support)" ON)
+option(USE_GPU_ONNXRUNTIME "Enable GPU acceleration" ON)
+
+if(WIN32)
+    option(USE_CUDA_ON_WINDOWS "Use CUDA for NVIDIA GPUs (vs DirectML universal)" ON)
+endif()
+
+if(BUILD_ONNXRUNTIME_FROM_SOURCE)
+    message(STATUS "========================================")
+    message(STATUS "ONNX Runtime: Building from source")
+    message(STATUS "This may take 20-30 minutes (like JUCE)")
+    message(STATUS "Platform: ${CMAKE_SYSTEM_NAME}")
+    message(STATUS "========================================")
+    include(${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/build_onnxruntime.cmake)
+    
+    add_dependencies(SuperPitchMonitor onnxruntime_build)
+    target_include_directories(SuperPitchMonitor PRIVATE ${ONNXRUNTIME_INCLUDE_DIR})
+    # Add extra provider include directories if defined
+    if(DEFINED ONNXRUNTIME_INCLUDE_DIR_EXTRA)
+        target_include_directories(SuperPitchMonitor PRIVATE ${ONNXRUNTIME_INCLUDE_DIR_EXTRA})
+    endif()
+    target_link_libraries(SuperPitchMonitor PRIVATE ${ONNXRUNTIME_LIBRARY})
+    target_compile_definitions(SuperPitchMonitor PRIVATE ML_ENABLED=1)
+    
+    if(APPLE)
+        add_custom_command(TARGET SuperPitchMonitor POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ONNXRUNTIME_LIBRARY} $<TARGET_FILE_DIR:SuperPitchMonitor>
+            COMMENT "Copying ONNX Runtime library..."
+        )
+    elseif(WIN32)
+        add_custom_command(TARGET SuperPitchMonitor POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ONNXRUNTIME_BIN_DIR}/onnxruntime.dll $<TARGET_FILE_DIR:SuperPitchMonitor>
+            COMMENT "Copying ONNX Runtime DLL..."
+        )
+    endif()
+else()
+    message(STATUS "ONNX Runtime: Using pre-built binary (fast, limited operators)")
+    include(${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/fetch_onnxruntime.cmake)
+    
+    if(EXISTS ${ONNXRUNTIME_LIBRARY})
+        target_include_directories(SuperPitchMonitor PRIVATE ${ONNXRUNTIME_INCLUDE_DIR})
+        target_link_libraries(SuperPitchMonitor PRIVATE ${ONNXRUNTIME_LIBRARY})
+        target_compile_definitions(SuperPitchMonitor PRIVATE ML_ENABLED=1)
+    else()
+        message(WARNING "ONNX Runtime not found, ML disabled")
+        target_compile_definitions(SuperPitchMonitor PRIVATE ML_ENABLED=0)
+    endif()
+endif()
+
+# Copy ML models
+add_custom_command(TARGET SuperPitchMonitor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/MLModel $<TARGET_FILE_DIR:SuperPitchMonitor>/MLModel
+    COMMENT "Copying ML models..."
 )
 
 #==============================================================================

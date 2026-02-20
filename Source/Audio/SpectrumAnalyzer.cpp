@@ -87,25 +87,6 @@ void SpectrumAnalyzer::process(const juce::AudioBuffer<float>& input, SpectrumDa
             
             lastTimestamp_ = juce::Time::getMillisecondCounterHiRes();
             fftPerformed = true;
-            
-            // Debug logging
-            static int fftCount = 0;
-            if (++fftCount % 50 == 0)
-            {
-                float maxMag = 0.0f;
-                int maxBin = 0;
-                for (int j = 0; j < (int)lastMagnitudes_.size(); ++j)
-                {
-                    if (lastMagnitudes_[j] > maxMag)
-                    {
-                        maxMag = lastMagnitudes_[j];
-                        maxBin = j;
-                    }
-                }
-                SPM_LOG_INFO("[SpectrumAnalyzer] FFT #" + juce::String(fftCount) 
-                             + " peak=" + juce::String(frequencyCache_[maxBin], 1) + "Hz"
-                             + " mag=" + juce::String(maxMag, 4));
-            }
         }
     }
     

@@ -29,6 +29,7 @@ void BandAnalysisTask::prepare(double sampleRate)
     windowBuffer_.setSize(1, config_.fftSize);
     windowCoeffs_.resize(config_.fftSize);
     prevPhases_.resize(config_.fftSize / 2 + 1, 0.0f);
+    firstFrame_ = true;  // Mark as first frame
     
     // Create circular buffer (stores 2 FFT window lengths, supports sliding window)
     circularBuffer_.setSize(1, config_.fftSize * 2);
@@ -147,10 +148,16 @@ void BandAnalysisTask::process(const juce::AudioBuffer<float>& input, BandSpectr
     output.sampleRate = static_cast<float>(sampleRate_);
     output.hasRefinedFreqs = true;
     
-    // YIN analysis: all bands use time-domain for precise frequency
-    // Run after FFT for spectrum verification
-    // Key fix: low band also needs YIN to distinguish dense fundamentals (e.g., C4-E4-G4 chord)
-    performYinAnalysis(input, output);
+    // YIN analysis: DISABLED - caused octave errors
+    // FFT-based detection is more reliable for polyphonic pitch detection
+    output.hasYinResult = false;
+    
+    // OLD CODE:
+    // if (bandIndex_ > 0) {
+    //     performYinAnalysis(input, output);
+    // } else {
+    //     output.hasYinResult = false;
+    // }
 }
 
 void BandAnalysisTask::performYinAnalysis(const juce::AudioBuffer<float>& input, 
@@ -321,6 +328,16 @@ void BandAnalysisTask::calculateRefinedFrequencies(BandSpectrumData& output)
     const float hopSize = static_cast<float>(config_.hopSize);
     const float twoPi = 2.0f * juce::MathConstants<float>::pi;
     
+    // FIX: On first frame, prevPhases_ is not valid, so use raw FFT frequencies
+    if (firstFrame_) {
+        for (int i = 0; i < numBins; ++i) {
+            output.refinedFreqs[i] = output.frequencies[i];
+            prevPhases_[i] = output.phases[i];
+        }
+        firstFrame_ = false;
+        return;
+    }
+    
     for (int i = 0; i < numBins; ++i) {
         float phaseCurrent = output.phases[i];
         float phasePrev = prevPhases_[i];
@@ -454,17 +471,17 @@ void MultiResolutionAnalyzer::fuseSpectrums(MultiResolutionData& data)
     // Low frequency (<400Hz)
     auto& low = data.lowBand();
     if (low.hasRefinedFreqs && !low.frequencies.empty()) {
-        float lowBinWidth = low.frequencies[1] - low.frequencies[0];
-        int lowBins = std::min((int)low.magnitudes.size(), 
-                                static_cast<int>(400.0f * 2.0f * totalBins / sampleRate_));
-        for (int i = 0; i < lowBins; ++i) {
-            if (i < (int)low.magnitudes.size()) {
-                float freq = i * lowBinWidth;
-                int targetBin = static_cast<int>(freq * 2.0 * totalBins / sampleRate_);
-                if (targetBin < totalBins) {
-                    fused.magnitudes[targetBin] = low.magnitudes[i];
-                    fused.refinedFreqs[targetBin] = low.refinedFreqs[i];
-                }
+        // FIX: Use actual frequency values from source band instead of recalculating
+        // This ensures correct frequency mapping regardless of band configuration
+        for (size_t i = 0; i < low.magnitudes.size(); ++i) {
+            float freq = low.frequencies[i];
+            // Only use data within the low band's intended frequency range
+            if (freq < 50.0f || freq > 400.0f) continue;
+            
+            int targetBin = static_cast<int>(freq * 2.0 * totalBins / sampleRate_);
+            if (targetBin >= 0 && targetBin < totalBins) {
+                fused.magnitudes[targetBin] = low.magnitudes[i];
+                fused.refinedFreqs[targetBin] = low.refinedFreqs[i];
             }
         }
     }
@@ -472,15 +489,12 @@ void MultiResolutionAnalyzer::fuseSpectrums(MultiResolutionData& data)
     // Mid frequency (400-2000Hz) - use YIN results for refinement
     auto& mid = data.midBand();
     if (mid.hasRefinedFreqs) {
-        int midStart = static_cast<int>(400.0f * 2.0 * totalBins / sampleRate_);
-        int midEnd = static_cast<int>(2000.0f * 2.0 * totalBins / sampleRate_);
-        
         for (size_t i = 0; i < mid.magnitudes.size(); ++i) {
             float freq = mid.frequencies[i];
             if (freq < 400.0f || freq > 2000.0f) continue;
             
             int targetBin = static_cast<int>(freq * 2.0 * totalBins / sampleRate_);
-            if (targetBin >= midStart && targetBin < midEnd && targetBin < totalBins) {
+            if (targetBin >= 0 && targetBin < totalBins) {
                 fused.magnitudes[targetBin] = mid.magnitudes[i];
                 
                 // Mid band prefers YIN results (if available)
@@ -497,14 +511,12 @@ void MultiResolutionAnalyzer::fuseSpectrums(MultiResolutionData& data)
     // High frequency (2000-6000Hz) - for overtone verification only
     auto& high = data.highBand();
     if (high.hasRefinedFreqs) {
-        int highStart = static_cast<int>(2000.0f * 2.0 * totalBins / sampleRate_);
-        
         for (size_t i = 0; i < high.magnitudes.size(); ++i) {
             float freq = high.frequencies[i];
             if (freq < 2000.0f || freq > 6000.0f) continue;
             
             int targetBin = static_cast<int>(freq * 2.0 * totalBins / sampleRate_);
-            if (targetBin >= highStart && targetBin < totalBins) {
+            if (targetBin >= 0 && targetBin < totalBins) {
                 fused.magnitudes[targetBin] = high.magnitudes[i];
                 fused.refinedFreqs[targetBin] = high.refinedFreqs[i];
             }

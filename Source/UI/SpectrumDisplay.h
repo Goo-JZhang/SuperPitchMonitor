@@ -24,6 +24,9 @@ public:
     
     // Update spectrum data
     void updateSpectrum(const SpectrumData& data);
+    
+    // Clear spectrum data (e.g., when stopped)
+    void clear();
 
     // Settings
     void setA4Frequency(float freq) { a4Frequency_ = freq; repaint(); }
@@ -89,8 +92,8 @@ private:
     
     // Layout margins
     static constexpr int leftMargin = 50;
-    static constexpr int rightMargin = 10;
-    static constexpr int topMargin = 10;
+    static constexpr int rightMargin = 50;  // Increased for right Y-axis labels
+    static constexpr int topMargin = 20;    // Increased for top labels
     static constexpr int bottomMargin = 35;
     
     // Drawing functions
@@ -98,6 +101,8 @@ private:
     void drawAxes(juce::Graphics& g);
     void drawGrid(juce::Graphics& g);
     void drawSpectrum(juce::Graphics& g);
+    void drawMLSpectrum(juce::Graphics& g);  // ML mode with dual Y-axes
+    void drawModeLabel(juce::Graphics& g);   // Mode indicator label
     void drawNoteMarkers(juce::Graphics& g);
     
     // Coordinate conversion

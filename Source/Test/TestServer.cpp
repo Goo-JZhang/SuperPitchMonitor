@@ -185,7 +185,7 @@ juce::String TestServer::handleGetStatus()
     
     obj->setProperty("status", "ok");
     obj->setProperty("running", audioEngine_ ? audioEngine_->isRunning() : false);
-    obj->setProperty("multiRes", audioEngine_ ? audioEngine_->isMultiResolutionEnabled() : false);
+    obj->setProperty("mlAnalysis", audioEngine_ ? audioEngine_->isMLAnalysisEnabled() : false);
     obj->setProperty("frameCount", (juce::int64)frameCount_);
     
     return juce::JSON::toString(obj.get());
@@ -195,9 +195,9 @@ juce::String TestServer::handleSetMultiRes(bool enabled)
 {
     if (audioEngine_)
     {
-        // Direct call - AudioEngine::setMultiResolutionEnabled is thread-safe
-        audioEngine_->setMultiResolutionEnabled(enabled);
-        SPM_LOG_INFO("[TestServer] Multi-resolution set to: " + juce::String(enabled ? "ON" : "OFF"));
+        // Direct call - AudioEngine::setMLAnalysisEnabled is thread-safe
+        audioEngine_->setMLAnalysisEnabled(enabled);
+        SPM_LOG_INFO("[TestServer] ML Analysis set to: " + juce::String(enabled ? "ON" : "OFF"));
     }
     
     juce::DynamicObject::Ptr obj = new juce::DynamicObject();

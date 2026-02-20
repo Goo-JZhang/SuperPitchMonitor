@@ -70,9 +70,18 @@ public:
     using FPSCallback = std::function<void(int)>;  // -1 for unlimited, or target FPS
     void onFPSChanged(FPSCallback callback) { fpsCallback_ = callback; }
     
-    // Multi-resolution analysis callback
-    using MultiResCallback = std::function<void(bool)>;
-    void onMultiResChanged(MultiResCallback callback) { multiResCallback_ = callback; }
+    // Buffer Size callback
+    using BufferSizeCallback = std::function<void(int)>;  // 128, 256, 512, 1024, 2048, 4096
+    void onBufferSizeChanged(BufferSizeCallback callback) { bufferSizeCallback_ = callback; }
+    int getBufferSize() const;  // Returns selected buffer size
+    
+    // ML Analysis callback
+    using MLAnalyzeCallback = std::function<void(bool)>;
+    void onMLAnalyzeChanged(MLAnalyzeCallback callback) { mlAnalyzeCallback_ = callback; }
+    
+    // ML CPU/GPU mode callback
+    using MLModeCallback = std::function<void(bool)>;  // true = GPU, false = CPU
+    void onMLModeChanged(MLModeCallback callback) { mlModeCallback_ = callback; }
     
     // Get current values
     float getA4Frequency() const { return (float)a4Slider_.getValue(); }
@@ -85,8 +94,21 @@ public:
     // Get current input source
     std::shared_ptr<AudioInputSource> getCurrentSource() const { return currentSource_; }
     
-    // Set multi-resolution analysis enabled
-    void setMultiResolutionEnabled(bool enabled);
+    // Set ML Analysis enabled (default ON)
+    void setMLAnalysisEnabled(bool enabled);
+    
+    // Set ML GPU mode (default true = GPU)
+    void setMLGPUEnabled(bool enabled);
+    
+    // ML Model selection callback
+    using MLModelCallback = std::function<void(const juce::String&)>;
+    void onMLModelChanged(MLModelCallback callback) { mlModelCallback_ = callback; }
+    
+    // Refresh available models in the dropdown
+    void refreshModelList();
+    
+    // Set current model in UI
+    void setCurrentMLModel(const juce::String& modelPath);
 
 private:
     void setupComponents();
@@ -140,13 +162,20 @@ private:
     juce::Slider maxFreqSlider_;
     juce::Label maxFreqLabel_;
     
-    juce::ToggleButton multiToneButton_;
-    juce::ToggleButton multiResButton_;  // Multi-resolution analysis toggle
+    juce::ToggleButton mlAnalyzeButton_;  // ML Analysis toggle (default ON)
+    juce::ToggleButton mlGpuButton_;      // ML GPU/CPU toggle (default ON = GPU)
+    
+    // ML Model selection
+    juce::Label mlModelLabel_;
+    juce::ComboBox mlModelCombo_;         // Dropdown for available models
+    juce::String currentModelPath_;       // Currently selected model path
     
     // Performance settings
     juce::Label performanceLabel_;
     juce::Label fpsLabel_;
     juce::ComboBox fpsCombo_;
+    juce::Label bufferSizeLabel_;
+    juce::ComboBox bufferSizeCombo_;
     
     // Current source
     std::shared_ptr<AudioInputSource> currentSource_;
@@ -160,7 +189,10 @@ private:
     SourceChangedCallback sourceChangedCallback_;
     CloseCallback closeCallback_;
     FPSCallback fpsCallback_;
-    MultiResCallback multiResCallback_;
+    BufferSizeCallback bufferSizeCallback_;
+    MLAnalyzeCallback mlAnalyzeCallback_;
+    MLModeCallback mlModeCallback_;
+    MLModelCallback mlModelCallback_;
     
     // Custom look and feel for limited popup menu height
     SettingsLookAndFeel lookAndFeel_;

@@ -58,8 +58,26 @@ void PitchDisplay::updatePitches(const PitchVector& pitches)
 
 void PitchDisplay::refreshCards(const PitchVector& pitches)
 {
+    // Filter out invalid pitches:
+    // - frequency < 20Hz (below ML model range)
+    // - frequency > 5000Hz (above ML model range)
+    // - MIDI note < 0 (invalid)
+    // - confidence < 0.2 (unreliable detection)
+    PitchVector validPitches;
+    validPitches.reserve(pitches.size());
+    for (const auto& pitch : pitches)
+    {
+        if (pitch.frequency >= 20.0f && 
+            pitch.frequency <= 5000.0f &&
+            pitch.midiNote >= 0.0f && 
+            pitch.confidence >= 0.2f)
+        {
+            validPitches.push_back(pitch);
+        }
+    }
+    
     // Create enough cards if needed
-    while (pitchCards_.size() < pitches.size())
+    while (pitchCards_.size() < validPitches.size())
     {
         auto card = std::make_unique<PitchCard>();
         addAndMakeVisible(card.get());
@@ -67,14 +85,14 @@ void PitchDisplay::refreshCards(const PitchVector& pitches)
     }
     
     // Update all cards with new data
-    for (size_t i = 0; i < pitches.size(); ++i)
+    for (size_t i = 0; i < validPitches.size(); ++i)
     {
-        pitchCards_[i]->setPitchData(pitches[i]);
+        pitchCards_[i]->setPitchData(validPitches[i]);
         pitchCards_[i]->setVisible(true);
     }
     
     // Hide unused cards and clear their data
-    for (size_t i = pitches.size(); i < pitchCards_.size(); ++i)
+    for (size_t i = validPitches.size(); i < pitchCards_.size(); ++i)
     {
         pitchCards_[i]->setVisible(false);
         pitchCards_[i]->clearData();  // Clear old data

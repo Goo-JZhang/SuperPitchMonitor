@@ -65,6 +65,7 @@ private:
         float confidence;
         float frequency;
         float amplitude;  // For brightness display
+        bool isMLEnergy;  // true = ML energy (0-1 range), false = FFT dB
         bool hasPitch;
     };
     

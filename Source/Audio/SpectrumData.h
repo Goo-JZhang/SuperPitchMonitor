@@ -11,7 +11,7 @@ namespace spm {
  */
 struct SpectrumData {
     std::vector<float> frequencies;     // FFT bin center frequencies (Hz)
-    std::vector<float> magnitudes;      // Magnitude spectrum
+    std::vector<float> magnitudes;      // Magnitude spectrum (for backward compatibility)
     std::vector<float> refinedFreqs;    // Phase vocoder refined frequencies (Hz)
     double timestamp;
     float sampleRate = 44100.0f;        // Sample rate used for FFT
@@ -22,6 +22,12 @@ struct SpectrumData {
     // Optional: raw audio data for time-domain algorithms (YIN)
     std::vector<float> rawAudio;
     bool hasRawAudio = false;
+    
+    // ML Mode: Separate confidence and energy data
+    std::vector<float> mlConfidence;    // ML confidence for each bin (0-1)
+    std::vector<float> mlEnergy;        // ML energy for each bin
+    bool isMLMode = false;              // Whether this data is from ML model
+    bool isFFTMode = false;             // Whether this data is from FFT analysis
 };
 
 /**
@@ -32,8 +38,9 @@ struct PitchCandidate {
     float midiNote = 0.0f;        // MIDI note number (with decimal for cents)
     float centsDeviation = 0.0f;  // Deviation from standard pitch in cents
     float confidence = 0.0f;      // Confidence level (0-1)
-    float amplitude = 0.0f;       // Relative amplitude
+    float amplitude = 0.0f;       // Relative amplitude (FFT) or energy (ML)
     int harmonicCount = 0;        // Number of detected harmonics
+    bool isMLEnergy = false;      // If true, amplitude is ML energy (not dB)
 };
 
 using PitchVector = std::vector<PitchCandidate>;

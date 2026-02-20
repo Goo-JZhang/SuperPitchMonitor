@@ -231,14 +231,24 @@ void SettingsContent::setupComponents()
     maxFreqLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
     addAndMakeVisible(maxFreqLabel_);
     
-    multiToneButton_.setButtonText("Enable Multi-tone Detection");
-    multiToneButton_.setToggleState(true, juce::dontSendNotification);
-    addAndMakeVisible(multiToneButton_);
+    mlAnalyzeButton_.setButtonText("ML Analysis (GPU Neural Network)");
+    mlAnalyzeButton_.setToggleState(true, juce::dontSendNotification);  // Default ON
+    mlAnalyzeButton_.addListener(this);
+    addAndMakeVisible(mlAnalyzeButton_);
     
-    multiResButton_.setButtonText("Multi-resolution Analysis (Low/Hi Split)");
-    multiResButton_.setToggleState(false, juce::dontSendNotification);
-    multiResButton_.addListener(this);
-    addAndMakeVisible(multiResButton_);
+    mlGpuButton_.setButtonText("Use GPU Acceleration (CoreML/DirectML/NNAPI)");
+    mlGpuButton_.setToggleState(true, juce::dontSendNotification);  // Default GPU ON
+    mlGpuButton_.addListener(this);
+    addAndMakeVisible(mlGpuButton_);
+    
+    // ML Model selection
+    mlModelLabel_.setText("ML Model:", juce::dontSendNotification);
+    mlModelLabel_.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible(mlModelLabel_);
+    
+    refreshModelList();  // Populate dropdown with available models
+    mlModelCombo_.addListener(this);
+    addAndMakeVisible(mlModelCombo_);
     
     // ===== Performance Section =====
     performanceLabel_.setText("Performance", juce::dontSendNotification);
@@ -258,6 +268,21 @@ void SettingsContent::setupComponents()
     fpsCombo_.setSelectedId(4);  // Default 60 Hz
     fpsCombo_.addListener(this);
     addAndMakeVisible(fpsCombo_);
+    
+    // Buffer Size selection
+    bufferSizeLabel_.setText("Buffer Size:", juce::dontSendNotification);
+    bufferSizeLabel_.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible(bufferSizeLabel_);
+    
+    bufferSizeCombo_.addItem("128 samples (2.9ms)", 1);
+    bufferSizeCombo_.addItem("256 samples (5.8ms)", 2);
+    bufferSizeCombo_.addItem("512 samples (11.6ms)", 3);
+    bufferSizeCombo_.addItem("1024 samples (23.2ms)", 4);
+    bufferSizeCombo_.addItem("2048 samples (46.4ms)", 5);
+    bufferSizeCombo_.addItem("4096 samples (92.9ms)", 6);
+    bufferSizeCombo_.setSelectedId(3);  // Default 512
+    bufferSizeCombo_.addListener(this);
+    addAndMakeVisible(bufferSizeCombo_);
     
     // Initial refresh
     refreshSources();
@@ -301,6 +326,20 @@ void SettingsContent::loadSettings()
     
     float dbMax = (float)props->getDoubleValue("dbMax", -10.0);
     dbMaxSlider_.setValue(dbMax, juce::dontSendNotification);
+    
+    // Load buffer size
+    int bufferSize = props->getIntValue("bufferSize", 512);
+    int bufferId = 3;  // default 512
+    switch (bufferSize)
+    {
+        case 128: bufferId = 1; break;
+        case 256: bufferId = 2; break;
+        case 512: bufferId = 3; break;
+        case 1024: bufferId = 4; break;
+        case 2048: bufferId = 5; break;
+        case 4096: bufferId = 6; break;
+    }
+    bufferSizeCombo_.setSelectedId(bufferId, juce::dontSendNotification);
 }
 
 void SettingsContent::saveSettings()
@@ -322,6 +361,7 @@ void SettingsContent::saveSettings()
     props->setValue("timeWindow", timeWindowSlider_.getValue());
     props->setValue("dbMin", dbMinSlider_.getValue());
     props->setValue("dbMax", dbMaxSlider_.getValue());
+    props->setValue("bufferSize", getBufferSize());
     
     appProps.saveIfNeeded();
 }
@@ -527,10 +567,16 @@ void SettingsContent::resized()
     maxFreqSlider_.setBounds(maxFreqRow.reduced(5, 0));
     y += 40;
     
-    multiToneButton_.setBounds(margin, y, 250, 30);
+    mlAnalyzeButton_.setBounds(margin, y, 350, 30);
     y += 35;
     
-    multiResButton_.setBounds(margin, y, 350, 30);
+    mlGpuButton_.setBounds(margin, y, 400, 30);
+    y += 35;
+    
+    // ML Model selection
+    auto modelRow = juce::Rectangle<int>(margin, y, contentWidth - 2*margin, 30);
+    mlModelLabel_.setBounds(modelRow.removeFromLeft(80));
+    mlModelCombo_.setBounds(modelRow);
     y += 50;
     
     // Performance Section
@@ -540,6 +586,11 @@ void SettingsContent::resized()
     auto fpsRow = juce::Rectangle<int>(margin, y, contentWidth - 2*margin, 30);
     fpsLabel_.setBounds(fpsRow.removeFromLeft(100));
     fpsCombo_.setBounds(fpsRow.removeFromLeft(150));
+    y += 40;
+    
+    auto bufferRow = juce::Rectangle<int>(margin, y, contentWidth - 2*margin, 30);
+    bufferSizeLabel_.setBounds(bufferRow.removeFromLeft(100));
+    bufferSizeCombo_.setBounds(bufferRow.removeFromLeft(200));
     y += 50;
     
     // Set total height for scrolling
@@ -566,13 +617,21 @@ void SettingsContent::buttonClicked(juce::Button* button)
         if (scaleCallback_)
             scaleCallback_(logScaleButton_.getToggleState());
     }
-    else if (button == &multiResButton_)
+    else if (button == &mlAnalyzeButton_)
     {
-        bool enabled = multiResButton_.getToggleState();
-        SPM_LOG_INFO("[Settings] Multi-resolution analysis " + juce::String(enabled ? "enabled" : "disabled"));
+        bool enabled = mlAnalyzeButton_.getToggleState();
+        SPM_LOG_INFO("[Settings] ML Analysis " + juce::String(enabled ? "enabled" : "disabled"));
         
-        if (multiResCallback_)
-            multiResCallback_(enabled);
+        if (mlAnalyzeCallback_)
+            mlAnalyzeCallback_(enabled);
+    }
+    else if (button == &mlGpuButton_)
+    {
+        bool useGPU = mlGpuButton_.getToggleState();
+        SPM_LOG_INFO("[Settings] ML GPU mode " + juce::String(useGPU ? "enabled" : "disabled"));
+        
+        if (mlModeCallback_)
+            mlModeCallback_(useGPU);
     }
 }
 
@@ -608,7 +667,30 @@ void SettingsContent::sliderValueChanged(juce::Slider* slider)
 
 void SettingsContent::comboBoxChanged(juce::ComboBox* comboBox)
 {
-    if (comboBox == &fpsCombo_)
+    if (comboBox == &mlModelCombo_)
+    {
+        int selectedId = mlModelCombo_.getSelectedId();
+        if (selectedId > 0)
+        {
+            juce::String selectedName = mlModelCombo_.getItemText(selectedId - 1);
+            
+            // Build full path from MLModel directory
+            juce::File modelDir = juce::File::getSpecialLocation(juce::File::currentApplicationFile)
+                                    .getParentDirectory()
+                                    .getChildFile("MLModel");
+            juce::File modelFile = modelDir.getChildFile(selectedName);
+            
+            if (modelFile.existsAsFile())
+            {
+                currentModelPath_ = modelFile.getFullPathName();
+                SPM_LOG_INFO("[Settings] Model changed to: " + selectedName);
+                
+                if (mlModelCallback_)
+                    mlModelCallback_(currentModelPath_);
+            }
+        }
+    }
+    else if (comboBox == &fpsCombo_)
     {
         int id = fpsCombo_.getSelectedId();
         int fps = 60;  // default
@@ -676,6 +758,26 @@ void SettingsContent::comboBoxChanged(juce::ComboBox* comboBox)
             }
         }
     }
+    else if (comboBox == &bufferSizeCombo_)
+    {
+        int id = bufferSizeCombo_.getSelectedId();
+        int bufferSize = 512;  // default
+        
+        switch (id)
+        {
+            case 1: bufferSize = 128; break;
+            case 2: bufferSize = 256; break;
+            case 3: bufferSize = 512; break;
+            case 4: bufferSize = 1024; break;
+            case 5: bufferSize = 2048; break;
+            case 6: bufferSize = 4096; break;
+        }
+        
+        SPM_LOG_INFO("[Settings] Buffer size changed to: " + juce::String(bufferSize) + " samples");
+        
+        if (bufferSizeCallback_)
+            bufferSizeCallback_(bufferSize);
+    }
 }
 
 // =============================================================================
@@ -694,7 +796,7 @@ SettingsPanel::SettingsPanel()
     viewport_ = std::make_unique<juce::Viewport>("SettingsViewport");
     viewport_->setViewedComponent(content_.get(), false);
     viewport_->setScrollBarsShown(true, false);  // Vertical only
-    viewport_->setScrollOnDragEnabled(true);      // Touch/drag support
+    viewport_->setScrollOnDragMode(juce::Viewport::ScrollOnDragMode::all);  // Touch/drag support
     addAndMakeVisible(viewport_.get());
 }
 
@@ -747,11 +849,103 @@ int SettingsContent::getTargetFPS() const
     }
 }
 
-void SettingsContent::setMultiResolutionEnabled(bool enabled)
+int SettingsContent::getBufferSize() const
 {
-    multiResButton_.setToggleState(enabled, juce::dontSendNotification);
-    if (multiResCallback_)
-        multiResCallback_(enabled);
+    int id = bufferSizeCombo_.getSelectedId();
+    switch (id)
+    {
+        case 1: return 128;
+        case 2: return 256;
+        case 3: return 512;   // Default
+        case 4: return 1024;
+        case 5: return 2048;
+        case 6: return 4096;
+        default: return 512;
+    }
+}
+
+void SettingsContent::setMLAnalysisEnabled(bool enabled)
+{
+    mlAnalyzeButton_.setToggleState(enabled, juce::dontSendNotification);
+    if (mlAnalyzeCallback_)
+        mlAnalyzeCallback_(enabled);
+}
+
+void SettingsContent::setMLGPUEnabled(bool enabled)
+{
+    mlGpuButton_.setToggleState(enabled, juce::dontSendNotification);
+    if (mlModeCallback_)
+        mlModeCallback_(enabled);
+}
+
+void SettingsContent::refreshModelList()
+{
+    mlModelCombo_.clear();
+    
+    // Find MLModel directory
+    juce::File modelDir = juce::File::getSpecialLocation(juce::File::currentApplicationFile)
+                            .getParentDirectory()
+                            .getChildFile("MLModel");
+    
+    if (!modelDir.exists())
+    {
+        modelDir.createDirectory();
+    }
+    
+    // Find all .onnx files
+    juce::Array<juce::File> modelFiles;
+    modelDir.findChildFiles(modelFiles, juce::File::findFiles, false, "*.onnx");
+    
+    int itemId = 1;
+    for (const auto& file : modelFiles)
+    {
+        mlModelCombo_.addItem(file.getFileName(), itemId++);
+    }
+    
+    // Add a default entry if no models found
+    if (mlModelCombo_.getNumItems() == 0)
+    {
+        mlModelCombo_.addItem("No models found", 1);
+        mlModelCombo_.setEnabled(false);
+    }
+    else
+    {
+        mlModelCombo_.setEnabled(true);
+        // Select first item by default
+        mlModelCombo_.setSelectedId(1, juce::dontSendNotification);
+        
+        // Set current path to first model
+        if (modelFiles.size() > 0)
+        {
+            currentModelPath_ = modelFiles[0].getFullPathName();
+        }
+    }
+}
+
+void SettingsContent::setCurrentMLModel(const juce::String& modelPath)
+{
+    juce::File modelFile(modelPath);
+    if (!modelFile.existsAsFile())
+        return;
+    
+    juce::String fileName = modelFile.getFileName();
+    
+    // Check if already in combo box
+    for (int i = 0; i < mlModelCombo_.getNumItems(); ++i)
+    {
+        if (mlModelCombo_.getItemText(i) == fileName)
+        {
+            mlModelCombo_.setSelectedItemIndex(i, juce::dontSendNotification);
+            currentModelPath_ = modelPath;
+            return;
+        }
+    }
+    
+    // Add and select
+    int newId = mlModelCombo_.getNumItems() + 1;
+    mlModelCombo_.addItem(fileName, newId);
+    mlModelCombo_.setSelectedId(newId, juce::dontSendNotification);
+    currentModelPath_ = modelPath;
 }
 
 } // namespace spm
