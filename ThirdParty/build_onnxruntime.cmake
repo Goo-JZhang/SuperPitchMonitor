@@ -49,6 +49,18 @@ if(NOT EXISTS ${ONNXRUNTIME_ROOT}/CMakeLists.txt)
         file(WRITE ${ONNXRUNTIME_ROOT}/cmake/external/mp11.cmake "${MP11_CMAKE}")
         message(STATUS "  - Patched mp11.cmake")
     endif()
+    
+    # Patch deps.txt to replace gitlab eigen URL
+    if(EXISTS ${ONNXRUNTIME_ROOT}/cmake/deps.txt)
+        file(READ ${ONNXRUNTIME_ROOT}/cmake/deps.txt DEPS_TXT)
+        # Replace gitlab eigen with working URL and updated hash
+        string(REPLACE 
+            "eigen;https://gitlab.com/libeigen/eigen/-/archive/e7248b26a1ed53fa030c5c459f7ea095dfd276ac/eigen-e7248b26a1ed53fa030c5c459f7ea095dfd276ac.zip;be8be39fdbc6e60e94fa7870b280707069b5b81a"
+            "eigen;https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz;d222db69a9e87d9006608e029d1039039f360b52" 
+            DEPS_TXT "${DEPS_TXT}")
+        file(WRITE ${ONNXRUNTIME_ROOT}/cmake/deps.txt "${DEPS_TXT}")
+        message(STATUS "  - Patched deps.txt (eigen)")
+    endif()
 endif()
 
 # Detect architecture
@@ -119,15 +131,49 @@ string(REPLACE ";" " " ONNX_BUILD_ARGS_STR "${ONNX_BUILD_ARGS}")
 # Use ExternalProject for actual build
 include(ExternalProject)
 
+# Use ExternalProject for actual build
+include(ExternalProject)
+
 # Create a wrapper script for building with proper argument passing
-set(BUILD_SCRIPT ${CMAKE_BINARY_DIR}/build_onnxruntime_wrapper.sh)
-file(WRITE ${BUILD_SCRIPT} "#!/bin/bash
+if(WIN32)
+    set(BUILD_SCRIPT ${CMAKE_BINARY_DIR}/build_onnxruntime_wrapper.bat)
+    file(WRITE ${BUILD_SCRIPT} "@echo off
+setlocal enabledelayedexpansion
+call C:\\ProgramData\\anaconda3\\Scripts\\activate.bat onnx_build
+set CMAKE_PREFIX_PATH=
+set CMAKE_SYSTEM_PREFIX_PATH=
+set PATH=C:\\Users\\jlzzh\\.conda\\envs\\onnx_build;C:\\Users\\jlzzh\\.conda\\envs\\onnx_build\\Scripts;C:\\Users\\jlzzh\\.conda\\envs\\onnx_build\\Library\\bin;C:\\Program Files\\Git\\cmd;C:\\Windows\\System32;C:\\Windows
+if defined CUDA_HOME set PATH=%CUDA_HOME%\\bin;%PATH%
+set HTTP_PROXY=http://127.0.0.1:7890
+set HTTPS_PROXY=http://127.0.0.1:7890
+set PYTHONNOUSERSITE=1
+set CONDA_PREFIX=
+set CONDA_DEFAULT_ENV=
+cd /d ${ONNXRUNTIME_ROOT}
+echo Building ONNX Runtime...
+echo Using Python:
+where python
+cmake --version
+python tools/ci_build/build.py ${ONNX_BUILD_ARGS_STR}
+if errorlevel 1 exit /b 1
+")
+else()
+    set(BUILD_SCRIPT ${CMAKE_BINARY_DIR}/build_onnxruntime_wrapper.sh)
+    file(WRITE ${BUILD_SCRIPT} "#!/bin/bash
 set -e
 cd ${ONNXRUNTIME_ROOT}
 echo 'Building ONNX Runtime with args: ${ONNX_BUILD_ARGS_STR}'
 python3 tools/ci_build/build.py ${ONNX_BUILD_ARGS_STR}
 ")
-file(CHMOD ${BUILD_SCRIPT} PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+    file(CHMOD ${BUILD_SCRIPT} PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+endif()
+
+# Set byproducts based on platform
+if(WIN32)
+    set(ONNXRUNTIME_BYPRODUCT ${ONNXRUNTIME_BUILD}/Release/onnxruntime.lib)
+else()
+    set(ONNXRUNTIME_BYPRODUCT ${ONNXRUNTIME_BUILD}/Release/libonnxruntime.dylib)
+endif()
 
 ExternalProject_Add(
     onnxruntime_build
@@ -141,8 +187,7 @@ ExternalProject_Add(
             ${ONNXRUNTIME_BUILD}/Release
             ${ONNXRUNTIME_INSTALL}
     BUILD_IN_SOURCE FALSE
-    BUILD_BYPRODUCTS
-        ${ONNXRUNTIME_BUILD}/Release/libonnxruntime.dylib
+    BUILD_BYPRODUCTS ${ONNXRUNTIME_BYPRODUCT}
     USES_TERMINAL_BUILD TRUE
     EXCLUDE_FROM_ALL FALSE
 )
