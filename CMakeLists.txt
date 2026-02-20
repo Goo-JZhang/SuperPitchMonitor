@@ -21,6 +21,14 @@ set(ONNXRUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/onnxruntime" CACHE P
 project(SuperPitchMonitor VERSION 1.0.0 LANGUAGES CXX OBJCXX)
 
 #==============================================================================
+# Default Build Configuration (ONNX Runtime from source with CUDA + DirectML)
+#==============================================================================
+# Set defaults before any options are declared
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
+endif()
+
+#==============================================================================
 # Output Directory Configuration
 #==============================================================================
 
