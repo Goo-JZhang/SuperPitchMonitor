@@ -2,7 +2,41 @@
 # Build ONNX Runtime from source with platform-specific GPU support
 # Similar to how JUCE is handled
 
-set(ONNXRUNTIME_VERSION "1.16.3")
+set(ONNXRUNTIME_VERSION "1.20.1")
+
+# Check CUDNN_HOME from environment if not set in CMake
+if(NOT DEFINED CUDNN_HOME)
+    if(DEFINED ENV{CUDNN_HOME})
+        # Remove any surrounding quotes from environment variable
+        string(REPLACE "\"" "" CUDNN_HOME "$ENV{CUDNN_HOME}")
+        message(STATUS "CUDNN_HOME from environment: ${CUDNN_HOME}")
+    else()
+        # Try to find cuDNN in common locations
+        if(EXISTS "C:/Program Files/NVIDIA/CUDNN/v9.19/include/cudnn.h")
+            set(CUDNN_HOME "C:/Program Files/NVIDIA/CUDNN/v9.19")
+        elseif(EXISTS "C:/tools/cuda/include/cudnn.h")
+            set(CUDNN_HOME "C:/tools/cuda")
+        endif()
+        if(CUDNN_HOME)
+            message(STATUS "CUDNN_HOME auto-detected: ${CUDNN_HOME}")
+        endif()
+    endif()
+endif()
+
+# Convert CUDNN_HOME to short path (8.3 format) to avoid space issues on Windows
+if(CUDNN_HOME AND WIN32)
+    # Normalize path for comparison (convert backslash to forward slash, remove quotes)
+    string(REPLACE "\\" "/" CUDNN_HOME_NORMALIZED "${CUDNN_HOME}")
+    string(REPLACE "\"" "" CUDNN_HOME_NORMALIZED "${CUDNN_HOME_NORMALIZED}")
+    # Hardcode known short paths for common cuDNN locations
+    if(CUDNN_HOME_NORMALIZED STREQUAL "C:/Program Files/NVIDIA/CUDNN/v9.19")
+        set(CUDNN_HOME "C:/PROGRA~1/NVIDIA/CUDNN/v9.19")
+        message(STATUS "CUDNN_HOME (short path): ${CUDNN_HOME}")
+    elseif(CUDNN_HOME_NORMALIZED STREQUAL "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.9")
+        set(CUDNN_HOME "C:/PROGRA~1/NVIDIA~2/CUDA/v12.9")
+        message(STATUS "CUDNN_HOME (short path): ${CUDNN_HOME}")
+    endif()
+endif()
 
 # Use the centralized path from CMakeLists.txt
 if(NOT DEFINED ONNXRUNTIME_DIR)
@@ -15,6 +49,14 @@ set(ONNXRUNTIME_INSTALL "${ONNXRUNTIME_DIR}/install")
 
 # Download ONNX Runtime source if not exists
 include(FetchContent)
+
+# Disable automatic re-download: use local source if exists, fail otherwise
+# User must manually delete src directory to force re-download
+if(EXISTS ${ONNXRUNTIME_ROOT}/CMakeLists.txt)
+    set(FETCHCONTENT_SOURCE_DIR_ONNXRUNTIME_SOURCE ${ONNXRUNTIME_ROOT})
+    message(STATUS "Using existing ONNX Runtime source: ${ONNXRUNTIME_ROOT}")
+endif()
+
 FetchContent_Declare(
     onnxruntime_source
     GIT_REPOSITORY https://github.com/microsoft/onnxruntime.git
@@ -24,8 +66,8 @@ FetchContent_Declare(
     SOURCE_DIR ${ONNXRUNTIME_ROOT}
 )
 
-# Check if already populated
-if(NOT EXISTS ${ONNXRUNTIME_ROOT}/CMakeLists.txt)
+# Check if already populated (CMakeLists.txt is in cmake subdirectory for v1.20+)
+if(NOT EXISTS ${ONNXRUNTIME_ROOT}/cmake/CMakeLists.txt)
     message(STATUS "Downloading ONNX Runtime source code...")
     message(STATUS "  Target: ${ONNXRUNTIME_ROOT}")
     FetchContent_Populate(onnxruntime_source)
@@ -50,17 +92,17 @@ if(NOT EXISTS ${ONNXRUNTIME_ROOT}/CMakeLists.txt)
         message(STATUS "  - Patched mp11.cmake")
     endif()
     
-    # Patch deps.txt to replace gitlab eigen URL
-    if(EXISTS ${ONNXRUNTIME_ROOT}/cmake/deps.txt)
-        file(READ ${ONNXRUNTIME_ROOT}/cmake/deps.txt DEPS_TXT)
-        # Replace gitlab eigen with working URL and updated hash
-        string(REPLACE 
-            "eigen;https://gitlab.com/libeigen/eigen/-/archive/e7248b26a1ed53fa030c5c459f7ea095dfd276ac/eigen-e7248b26a1ed53fa030c5c459f7ea095dfd276ac.zip;be8be39fdbc6e60e94fa7870b280707069b5b81a"
-            "eigen;https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz;d222db69a9e87d9006608e029d1039039f360b52" 
-            DEPS_TXT "${DEPS_TXT}")
-        file(WRITE ${ONNXRUNTIME_ROOT}/cmake/deps.txt "${DEPS_TXT}")
-        message(STATUS "  - Patched deps.txt (eigen)")
-    endif()
+        # Patch deps.txt to fix eigen hash mismatch
+        if(EXISTS ${ONNXRUNTIME_ROOT}/cmake/deps.txt)
+            file(READ ${ONNXRUNTIME_ROOT}/cmake/deps.txt DEPS_TXT)
+            # Fix hash mismatch: actual hash from gitlab download is 32b145f525a8308d7ab1c09388b2e288312d8eba
+            string(REPLACE 
+                "eigen;https://gitlab.com/libeigen/eigen/-/archive/e7248b26a1ed53fa030c5c459f7ea095dfd276ac/eigen-e7248b26a1ed53fa030c5c459f7ea095dfd276ac.zip;be8be39fdbc6e60e94fa7870b280707069b5b81a"
+                "eigen;https://gitlab.com/libeigen/eigen/-/archive/e7248b26a1ed53fa030c5c459f7ea095dfd276ac/eigen-e7248b26a1ed53fa030c5c459f7ea095dfd276ac.zip;32b145f525a8308d7ab1c09388b2e288312d8eba" 
+                DEPS_TXT "${DEPS_TXT}")
+            file(WRITE ${ONNXRUNTIME_ROOT}/cmake/deps.txt "${DEPS_TXT}")
+            message(STATUS "  - Patched deps.txt (eigen hash fixed)")
+        endif()
 endif()
 
 # Detect architecture
@@ -85,6 +127,18 @@ set(ONNX_BUILD_ARGS
     "onnxruntime_MINIMAL_BUILD=OFF"
     "onnxruntime_REDUCED_OPS_BUILD=OFF"
     "onnxruntime_DISABLE_CONTRIB_OPS=OFF"
+    "CMAKE_CUDA_COMPILER=C:/PROGRA~1/NVIDIA~2/CUDA/v12.8/bin/nvcc.exe"
+    "CUDAToolkit_ROOT=C:/PROGRA~1/NVIDIA~2/CUDA/v12.8"
+    "CUDNN_INCLUDE_DIR=${CUDNN_HOME}/include/12.9"
+    "cudnn_LIBRARY=${CUDNN_HOME}/lib/12.9/x64/cudnn.lib"
+    "cudnn_cnn_LIBRARY=${CUDNN_HOME}/lib/12.9/x64/cudnn_cnn.lib"
+    "cudnn_adv_LIBRARY=${CUDNN_HOME}/lib/12.9/x64/cudnn_adv.lib"
+    "cudnn_graph_LIBRARY=${CUDNN_HOME}/lib/12.9/x64/cudnn_graph.lib"
+    "cudnn_ops_LIBRARY=${CUDNN_HOME}/lib/12.9/x64/cudnn_ops.lib"
+    "cudnn_engines_runtime_compiled_LIBRARY=${CUDNN_HOME}/lib/12.9/x64/cudnn_engines_runtime_compiled.lib"
+    "cudnn_engines_precompiled_LIBRARY=${CUDNN_HOME}/lib/12.9/x64/cudnn_engines_precompiled.lib"
+    "cudnn_heuristic_LIBRARY=${CUDNN_HOME}/lib/12.9/x64/cudnn_heuristic.lib"
+    "CUDNN_PATH=${CUDNN_HOME}"
 )
 
 # Platform-specific configuration
@@ -105,14 +159,23 @@ if(APPLE)
     endif()
     
 elseif(WIN32)
+    # Windows: Enable both CUDA (for NVIDIA RTX 4080) and DirectML (universal fallback)
+    message(STATUS "ONNX Runtime: Building for Windows with CUDA + DirectML support")
     if(USE_CUDA_ON_WINDOWS)
-        message(STATUS "ONNX Runtime: Building for Windows with CUDA support")
         list(APPEND ONNX_BUILD_ARGS "--use_cuda")
-        list(APPEND ONNX_BUILD_ARGS "--cuda_version" "11.8")
-    else()
-        message(STATUS "ONNX Runtime: Building for Windows with DirectML support")
-        list(APPEND ONNX_BUILD_ARGS "--use_dml")
+        # Ensure CUDNN_HOME is set
+        if(NOT CUDNN_HOME)
+            set(CUDNN_HOME "$ENV{CUDNN_HOME}")
+        endif()
+        if(CUDNN_HOME)
+            message(STATUS "Adding --cudnn_home: ${CUDNN_HOME}")
+            list(APPEND ONNX_BUILD_ARGS "--cudnn_home")
+            list(APPEND ONNX_BUILD_ARGS "${CUDNN_HOME}")
+        else()
+            message(WARNING "CUDNN_HOME not set! CUDA build may fail.")
+        endif()
     endif()
+    list(APPEND ONNX_BUILD_ARGS "--use_dml")
     
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Android")
     message(STATUS "ONNX Runtime: Building for Android with NNAPI support")
@@ -125,8 +188,13 @@ else()
     message(STATUS "ONNX Runtime: Building for Linux (CPU only)")
 endif()
 
+# Debug output
+message(STATUS "CUDNN_HOME value: '${CUDNN_HOME}'")
+message(STATUS "ONNX_BUILD_ARGS before convert: ${ONNX_BUILD_ARGS}")
+
 # Convert list to space-separated string for the script
 string(REPLACE ";" " " ONNX_BUILD_ARGS_STR "${ONNX_BUILD_ARGS}")
+message(STATUS "ONNX_BUILD_ARGS_STR: ${ONNX_BUILD_ARGS_STR}")
 
 # Use ExternalProject for actual build
 include(ExternalProject)
@@ -144,6 +212,11 @@ set CMAKE_PREFIX_PATH=
 set CMAKE_SYSTEM_PREFIX_PATH=
 set PATH=C:\\Users\\jlzzh\\.conda\\envs\\onnx_build;C:\\Users\\jlzzh\\.conda\\envs\\onnx_build\\Scripts;C:\\Users\\jlzzh\\.conda\\envs\\onnx_build\\Library\\bin;C:\\Program Files\\Git\\cmd;C:\\Windows\\System32;C:\\Windows
 if defined CUDA_HOME set PATH=%CUDA_HOME%\\bin;%PATH%
+if defined CUDNN_HOME (
+    set CUDNN_HOME=${CUDNN_HOME}
+    set CUDNN_PATH=${CUDNN_HOME}
+    set PATH=%CUDNN_HOME%\\bin;%PATH%
+)
 set HTTP_PROXY=http://127.0.0.1:7890
 set HTTPS_PROXY=http://127.0.0.1:7890
 set PYTHONNOUSERSITE=1
