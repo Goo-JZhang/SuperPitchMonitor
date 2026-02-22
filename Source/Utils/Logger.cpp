@@ -291,7 +291,7 @@ void FileLogger::installCrashHandlers()
 {
 #ifdef _WIN32
     // Set unhandled exception filter
-    SetUnhandledExceptionFilter(&FileLogger::sehHandler);
+    SetUnhandledExceptionFilter(reinterpret_cast<LPTOP_LEVEL_EXCEPTION_FILTER>(&FileLogger::sehHandler));
     
     // Install C++ exception handlers
     installTerminateHandler();
@@ -366,11 +366,13 @@ void FileLogger::writeCrashDump(const juce::String& reason)
 
 #ifdef _WIN32
 
-LONG WINAPI FileLogger::sehHandler(EXCEPTION_POINTERS* pExceptionInfo)
+long __stdcall FileLogger::sehHandler(void* pExceptionInfo)
 {
+    // Cast to actual Windows type
+    EXCEPTION_POINTERS* pException = static_cast<EXCEPTION_POINTERS*>(pExceptionInfo);
     if (g_loggerInstance)
     {
-        DWORD code = pExceptionInfo->ExceptionRecord->ExceptionCode;
+        DWORD code = pException->ExceptionRecord->ExceptionCode;
         juce::String reason = getSEHDescription(code);
         
         juce::String crashInfo;
@@ -379,12 +381,12 @@ LONG WINAPI FileLogger::sehHandler(EXCEPTION_POINTERS* pExceptionInfo)
         crashInfo += "!!! EXCEPTION DETECTED (SEH)\n";
         crashInfo += "!!! Code: 0x" + juce::String::toHexString((juce::int64)code).toUpperCase() + "\n";
         crashInfo += "!!! Description: " + reason + "\n";
-        crashInfo += "!!! Address: 0x" + juce::String::toHexString((juce::int64)pExceptionInfo->ExceptionRecord->ExceptionAddress).toUpperCase() + "\n";
+        crashInfo += "!!! Address: 0x" + juce::String::toHexString((juce::int64)pException->ExceptionRecord->ExceptionAddress).toUpperCase() + "\n";
         crashInfo += "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n";
         
         // Stack trace from exception context
         crashInfo += "\nException Stack Trace:\n";
-        crashInfo += getStackTraceFromContext(pExceptionInfo->ContextRecord);
+        crashInfo += getStackTraceFromContext(pException->ContextRecord);
         
         crashInfo += "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n";
         
@@ -401,7 +403,7 @@ LONG WINAPI FileLogger::sehHandler(EXCEPTION_POINTERS* pExceptionInfo)
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
-juce::String FileLogger::getSEHDescription(DWORD code)
+juce::String FileLogger::getSEHDescription(unsigned int code)
 {
     switch (code)
     {
@@ -426,9 +428,12 @@ juce::String FileLogger::getSEHDescription(DWORD code)
     }
 }
 
-juce::String FileLogger::getStackTraceFromContext(const CONTEXT* context)
+juce::String FileLogger::getStackTraceFromContext(void* context)
 {
     juce::String result;
+    
+    // Cast to actual Windows type
+    const CONTEXT* ctx = static_cast<const CONTEXT*>(context);
     
     HANDLE process = GetCurrentProcess();
     HANDLE thread = GetCurrentThread();
@@ -438,19 +443,19 @@ juce::String FileLogger::getStackTraceFromContext(const CONTEXT* context)
     
 #ifdef _WIN64
     DWORD machineType = IMAGE_FILE_MACHINE_AMD64;
-    stackFrame.AddrPC.Offset = context->Rip;
+    stackFrame.AddrPC.Offset = ctx->Rip;
     stackFrame.AddrPC.Mode = AddrModeFlat;
-    stackFrame.AddrFrame.Offset = context->Rbp;
+    stackFrame.AddrFrame.Offset = ctx->Rbp;
     stackFrame.AddrFrame.Mode = AddrModeFlat;
-    stackFrame.AddrStack.Offset = context->Rsp;
+    stackFrame.AddrStack.Offset = ctx->Rsp;
     stackFrame.AddrStack.Mode = AddrModeFlat;
 #else
     DWORD machineType = IMAGE_FILE_MACHINE_I386;
-    stackFrame.AddrPC.Offset = context->Eip;
+    stackFrame.AddrPC.Offset = ctx->Eip;
     stackFrame.AddrPC.Mode = AddrModeFlat;
-    stackFrame.AddrFrame.Offset = context->Ebp;
+    stackFrame.AddrFrame.Offset = ctx->Ebp;
     stackFrame.AddrFrame.Mode = AddrModeFlat;
-    stackFrame.AddrStack.Offset = context->Esp;
+    stackFrame.AddrStack.Offset = ctx->Esp;
     stackFrame.AddrStack.Mode = AddrModeFlat;
 #endif
     

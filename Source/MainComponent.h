@@ -88,6 +88,7 @@ private:
     void setupAudio();
     void handlePermissionDenied();
     void connectSettingsCallbacks();
+    void updateStatusLabel();  // Update status label with input source info
     
     // Callback functions
     void onSpectrumData(const SpectrumData& data);

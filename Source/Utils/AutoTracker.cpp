@@ -71,6 +71,7 @@ float AutoTracker::calculateScore(const PitchCandidate& pitch) const
 
 bool AutoTracker::isInCenterZone(float freq, float viewCenterFreq, float viewHeightSemitones) const
 {
+    // Check if freq is inside the center zone (middle 1/3 of view)
     float midi = freqToMidi(freq);
     float centerMidi = freqToMidi(viewCenterFreq);
     float offset = midi - centerMidi;
@@ -83,6 +84,8 @@ bool AutoTracker::isInCenterZone(float freq, float viewCenterFreq, float viewHei
 
 float AutoTracker::distanceToCenterZone(float freq, float viewCenterFreq, float viewHeightSemitones) const
 {
+    // Calculate distance from freq to the CENTER ZONE (not to exact center)
+    // Returns 0 if inside center zone, otherwise distance to nearest boundary
     float midi = freqToMidi(freq);
     float centerMidi = freqToMidi(viewCenterFreq);
     float offset = midi - centerMidi;
@@ -102,6 +105,7 @@ bool AutoTracker::hasPointInCenterZone(const std::vector<PitchCandidate>& pitche
                                         float viewCenterFreq,
                                         float viewHeightSemitones) const
 {
+    // Case 3: Check if any point is inside the center zone (middle 1/3 of view)
     for (const auto& pitch : pitches)
     {
         if (pitch.confidence > 0.1f && isInCenterZone(pitch.frequency, viewCenterFreq, viewHeightSemitones))
@@ -153,10 +157,11 @@ bool AutoTracker::findNearestToCenter(const std::vector<PitchCandidate>& pitches
         if (pitch.confidence < 0.1f)
             continue;
             
-        // Skip points already in center zone
+        // Skip points already in center zone (Case 3: hold position)
         if (isInCenterZone(pitch.frequency, viewCenterFreq, viewHeightSemitones))
             continue;
             
+        // Calculate distance to center zone boundary (0 if inside)
         float distance = distanceToCenterZone(pitch.frequency, viewCenterFreq, viewHeightSemitones);
         
         // Compare: distance first, then confidence
@@ -317,20 +322,22 @@ bool AutoTracker::update(const std::vector<PitchCandidate>& currentPitches,
     float targetConf = 0.0f;
     
     // Case 1: No points visible on screen at all - global jump
-    bool hasPointsNearView = false;
+    // Check if any pitch is within the current view (within ±viewHeightSemitones/2)
+    bool hasPointsInView = false;
+    float viewHalfHeight = viewHeightSemitones / 2.0f;
     for (const auto* pitch : validPitches)
     {
         float dist = std::abs(freqToMidi(pitch->frequency) - freqToMidi(currentViewCenterFreq));
-        if (dist < viewHeightSemitones)
+        if (dist < viewHalfHeight)
         {
-            hasPointsNearView = true;
+            hasPointsInView = true;
             break;
         }
     }
     
-    if (!hasPointsNearView)
+    if (!hasPointsInView)
     {
-        // Global jump to best point
+        // Global jump to best point (Case 1: no points in view at all)
         if (findGlobalBest(currentPitches, targetFreq, targetConf))
         {
             outNewViewCenterFreq = targetFreq;

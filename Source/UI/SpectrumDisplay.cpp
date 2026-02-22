@@ -233,8 +233,12 @@ void SpectrumDisplay::drawAxes(juce::Graphics& g)
     
     g.setColour(juce::Colours::white.withAlpha(0.6f));
     
+    // Determine mode: use preview state if no data yet
+    bool isMLMode = currentData_.isMLMode || 
+                    (!currentData_.isMLMode && !currentData_.isFFTMode && mlPreviewEnabled_);
+    
     // ML Mode: Dual Y-axes
-    if (currentData_.isMLMode)
+    if (isMLMode)
     {
         // === Left Y Axis: Confidence (0.0, 0.2, 0.4, 0.6, 0.8, 1.0) ===
         g.setColour(juce::Colours::lime.withAlpha(0.6f));
@@ -645,17 +649,22 @@ void SpectrumDisplay::drawModeLabel(juce::Graphics& g)
     juce::Colour color;
     juce::String subtext;
     
-    if (currentData_.isMLMode)
+    // Determine mode: use preview state if no data yet
+    bool hasData = !currentData_.magnitudes.empty() || !currentData_.mlConfidence.empty();
+    bool isMLMode = currentData_.isMLMode || (!hasData && mlPreviewEnabled_);
+    bool isFFTMode = currentData_.isFFTMode || (!hasData && !mlPreviewEnabled_);
+    
+    if (isMLMode)
     {
         label = "ML MODE";
         color = juce::Colours::lime;
-        subtext = "Base frequency distribution only";
+        subtext = hasData ? "Base frequency distribution only" : "Ready (ML enabled)";
     }
-    else if (currentData_.isFFTMode)
+    else if (isFFTMode)
     {
         label = "FFT MODE";
         color = juce::Colours::cyan;
-        subtext = "Traditional FFT spectrum";
+        subtext = hasData ? "Traditional FFT spectrum" : "Ready (FFT Analysis)";
     }
     else
     {

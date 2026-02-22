@@ -1,5 +1,6 @@
 #include "PitchWaterfallDisplay.h"
 #include "../Utils/Logger.h"
+#include "../Utils/AutoTracker.h"
 
 namespace spm {
 
@@ -20,8 +21,42 @@ PitchWaterfallDisplay::~PitchWaterfallDisplay()
 
 void PitchWaterfallDisplay::timerCallback()
 {
+    // Auto-tracking update
+    if (autoTrackingEnabled_)
+    {
+        double now = juce::Time::getMillisecondCounterHiRes() / 1000.0;
+        double deltaTime = (lastAutoTrackUpdateTime_ > 0.0) ? 
+                          static_cast<float>(now - lastAutoTrackUpdateTime_) : 0.033f;
+        lastAutoTrackUpdateTime_ = now;
+        
+        // Get current visible range in semitones
+        float viewHeightSemitones = 24.0f;  // Approximate visible range
+        float currentCenterFreq = std::sqrt(minFreq_ * maxFreq_);  // Geometric mean
+        
+        // Apply scroll offset to center frequency
+        float centerMidi = 69.0f + scrollOffset_;  // A4 = 69 MIDI + offset
+        currentCenterFreq = 440.0f * std::pow(2.0f, (centerMidi - 69.0f) / 12.0f);
+        
+        float newCenterFreq = currentCenterFreq;
+        
+        std::vector<PitchCandidate> pitchesCopy;
+        bool hasDetection;
+        {
+            juce::ScopedLock lock(currentPitchesLock_);
+            pitchesCopy = currentPitches_;
+            hasDetection = hasValidDetection_;
+        }
+        
+        if (autoTracker_.update(pitchesCopy, hasDetection, currentCenterFreq, 
+                                viewHeightSemitones, static_cast<float>(deltaTime), newCenterFreq))
+        {
+            // Update scroll offset based on new center frequency
+            float newCenterMidi = 69.0f + 12.0f * std::log2(newCenterFreq / 440.0f);
+            scrollOffset_ = newCenterMidi - 69.0f;
+        }
+    }
+    
     // Continuous repaint to keep time axis scrolling
-    // The paint method uses current time to calculate X positions
     repaint();
 }
 
@@ -100,15 +135,11 @@ bool PitchWaterfallDisplay::isMainNote(int noteIndex) const
 
 void PitchWaterfallDisplay::getVisibleMidiRange(float& minMidi, float& maxMidi) const
 {
-    auto plotArea = getPlotArea();
-    float height = (float)plotArea.getHeight();
-    
-    // Base range (A4 +/- 2 octaves by default)
+    // Base range centered on A4 + scroll offset
     float baseCenter = 69.0f + scrollOffset_;  // A4 + scroll
-    float visibleSemitones = 24.0f;  // 2 octaves visible by default
     
-    minMidi = baseCenter - visibleSemitones / 2.0f;
-    maxMidi = baseCenter + visibleSemitones / 2.0f;
+    minMidi = baseCenter - visibleSemitones_ / 2.0f;
+    maxMidi = baseCenter + visibleSemitones_ / 2.0f;
 }
 
 juce::Rectangle<int> PitchWaterfallDisplay::getPlotArea() const
@@ -148,16 +179,54 @@ float PitchWaterfallDisplay::freqToY(float freq) const
 void PitchWaterfallDisplay::mouseWheelMove(const juce::MouseEvent& event, 
                                            const juce::MouseWheelDetails& wheel)
 {
-    // Vertical scroll changes the visible frequency range
+    // Notify auto-tracker of user interaction
+    autoTracker_.onUserInteraction();
+    
+    // Mouse wheel: Zoom frequency range (adjust visible semitones)
+    // Wheel up (deltaY > 0): Zoom in (smaller visible range)
+    // Wheel down (deltaY < 0): Zoom out (larger visible range)
     if (std::abs(wheel.deltaY) > 0.01f)
     {
-        scrollOffset_ += wheel.deltaY * scrollSensitivity * 12.0f;  // 12 semitones per "page"
+        float zoomFactor = 1.0f - wheel.deltaY * 0.1f;
+        visibleSemitones_ *= zoomFactor;
+        visibleSemitones_ = juce::jlimit(minVisibleSemitones, maxVisibleSemitones, visibleSemitones_);
+        
         repaint();
     }
+    
+    // End interaction after a short delay
+    autoTracker_.onUserInteractionEnd();
+}
+
+void PitchWaterfallDisplay::mouseMagnify(const juce::MouseEvent& event, float scaleFactor)
+{
+    // Notify auto-tracker of user interaction
+    autoTracker_.onUserInteraction();
+    
+    // scaleFactor > 1.0: 放大 (缩小可见范围)
+    // scaleFactor < 1.0: 缩小 (扩大可见范围)
+    // 注意：这里除以 scaleFactor，因为 scaleFactor > 1 表示放大（显示更少内容）
+    visibleSemitones_ /= scaleFactor;
+    visibleSemitones_ = juce::jlimit(minVisibleSemitones, maxVisibleSemitones, visibleSemitones_);
+    
+    repaint();
+    
+    // End interaction after a short delay
+    autoTracker_.onUserInteractionEnd();
 }
 
 void PitchWaterfallDisplay::mouseDown(const juce::MouseEvent& event)
 {
+    // Check for double-click (jump to best or reset)
+    if (event.getNumberOfClicks() == 2)
+    {
+        performJumpToBestOrReset();
+        return;
+    }
+    
+    // Notify auto-tracker of user interaction
+    autoTracker_.onUserInteraction();
+    
     // Start dragging on left mouse button in plot area
     if (event.mods.isLeftButtonDown())
     {
@@ -202,6 +271,9 @@ void PitchWaterfallDisplay::mouseUp(const juce::MouseEvent& event)
         isDragging_ = false;
         setMouseCursor(juce::MouseCursor::NormalCursor);
     }
+    
+    // Notify auto-tracker that interaction ended
+    autoTracker_.onUserInteractionEnd();
 }
 
 void PitchWaterfallDisplay::updatePitch(const PitchCandidate& pitch)
@@ -213,6 +285,21 @@ void PitchWaterfallDisplay::updatePitch(const PitchCandidate& pitch)
 
 void PitchWaterfallDisplay::updatePitches(const PitchVector& pitches)
 {
+    // Store current pitches for auto-tracking (only current frame, not history)
+    {
+        juce::ScopedLock lock(currentPitchesLock_);
+        currentPitches_.clear();
+        hasValidDetection_ = false;
+        for (const auto& pitch : pitches)
+        {
+            if (pitch.confidence > 0.1f)  // Lower threshold for auto-tracker
+            {
+                currentPitches_.push_back(pitch);
+                hasValidDetection_ = true;
+            }
+        }
+    }
+    
     if (pitches.empty()) return;
     
     {
@@ -278,6 +365,55 @@ void PitchWaterfallDisplay::clear()
         pitchHistory_.clear();
         currentSpectrum_.clear();
     }
+    {
+        juce::ScopedLock lock(currentPitchesLock_);
+        currentPitches_.clear();
+        hasValidDetection_ = false;
+    }
+    repaint();
+}
+
+void PitchWaterfallDisplay::performJumpToBestOrReset()
+{
+    // Double-click / double-tap: Jump to best pitch or reset to A4
+    
+    std::vector<PitchCandidate> pitchesCopy;
+    {
+        juce::ScopedLock lock(currentPitchesLock_);
+        pitchesCopy = currentPitches_;
+    }
+    
+    // Find best pitch by confidence
+    const PitchCandidate* best = nullptr;
+    float bestScore = -1.0f;
+    for (const auto& pitch : pitchesCopy)
+    {
+        if (pitch.confidence > 0.1f)
+        {
+            float score = pitch.confidence * 1000.0f + pitch.amplitude;
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = &pitch;
+            }
+        }
+    }
+    
+    if (best)
+    {
+        // Jump to best pitch
+        float targetMidi = best->midiNote;
+        scrollOffset_ = targetMidi - 69.0f;  // A4 = 69
+        SPM_LOG_INFO("[AutoTrack] Double-click: Jump to best pitch " + 
+                    juce::String(best->frequency) + " Hz");
+    }
+    else
+    {
+        // Reset to A4 center
+        scrollOffset_ = 0.0f;
+        SPM_LOG_INFO("[AutoTrack] Double-click: Reset to A4 (440 Hz)");
+    }
+    
     repaint();
 }
 

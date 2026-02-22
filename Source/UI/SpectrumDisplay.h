@@ -51,6 +51,10 @@ public:
     // Target refresh rate (Hz), -1 for unlimited
     void setTargetRefreshRate(int fps);
     int getTargetRefreshRate() const { return targetFPS_; }
+    
+    // Set ML enabled preview state (used before Start to show expected mode)
+    void setMLPreviewEnabled(bool enabled) { mlPreviewEnabled_ = enabled; repaint(); }
+    bool isMLPreviewEnabled() const { return mlPreviewEnabled_; }
 
 private:
     SpectrumData currentData_;
@@ -118,6 +122,9 @@ private:
     void updateLogFreqRange();
     juce::String freqToNoteName(float freq) const;
     juce::String freqToString(float freq) const;
+    
+    // ML preview state (used before Start to show expected mode from Settings)
+    bool mlPreviewEnabled_ = false;
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumDisplay)
 };

@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <deque>
 #include "../Audio/AudioEngine.h"
+#include "../Utils/AutoTracker.h"
 
 namespace spm {
 
@@ -23,6 +24,7 @@ public:
     void resized() override;
     void timerCallback() override;
     void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
+    void mouseMagnify(const juce::MouseEvent& event, float scaleFactor) override;
     void mouseDown(const juce::MouseEvent& event) override;
     void mouseDrag(const juce::MouseEvent& event) override;
     void mouseUp(const juce::MouseEvent& event) override;
@@ -56,6 +58,16 @@ public:
     // Target refresh rate (Hz), -1 for unlimited
     void setTargetRefreshRate(int fps);
     int getTargetRefreshRate() const { return targetFPS_; }
+    
+    // Auto-tracking control
+    void setAutoTrackingEnabled(bool enabled) { autoTrackingEnabled_ = enabled; }
+    bool isAutoTrackingEnabled() const { return autoTrackingEnabled_; }
+    
+    // Reset auto-tracker cooldown (call when Start button clicked)
+    void resetAutoTrackerCooldown() { autoTracker_.resetCooldown(); }
+    
+    // Perform jump to best pitch or reset to A4 (for double-click)
+    void performJumpToBestOrReset();
 
 private:
     // History buffer - stores pitch data over time
@@ -84,6 +96,11 @@ private:
     // Scroll offset for Y axis (in semitones, 0 = centered on A4)
     float scrollOffset_ = 0.0f;
     
+    // Visible range (zoom control) - number of semitones visible on Y axis
+    float visibleSemitones_ = 24.0f;  // Default: 2 octaves
+    static constexpr float minVisibleSemitones = 12.0f;   // Min: 1 octave
+    static constexpr float maxVisibleSemitones = 60.0f;   // Max: 5 octaves
+    
     // Target refresh rate
     int targetFPS_ = 60;
     bool unlimitedFPS_ = false;
@@ -92,6 +109,16 @@ private:
     bool isDragging_ = false;
     float dragStartY_ = 0.0f;
     float dragStartOffset_ = 0.0f;
+    
+    // Auto-tracking
+    AutoTracker autoTracker_;
+    bool autoTrackingEnabled_ = true;
+    double lastAutoTrackUpdateTime_ = 0.0;
+    
+    // Current pitch data for auto-tracking (updated by updatePitches)
+    std::vector<PitchCandidate> currentPitches_;
+    bool hasValidDetection_ = false;
+    juce::CriticalSection currentPitchesLock_;
     
     // Derived cache
     float minLogFreq_;

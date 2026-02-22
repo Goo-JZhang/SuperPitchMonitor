@@ -200,6 +200,10 @@ void MainComponent::connectSettingsCallbacks()
         {
             audioEngine_->setMLAnalysisEnabled(enabled);
         }
+        if (spectrumDisplay_)
+        {
+            spectrumDisplay_->setMLPreviewEnabled(enabled);
+        }
         SPM_LOG_INFO("[Settings] ML Analysis: " + juce::String(enabled ? "enabled" : "disabled"));
     });
     
@@ -297,6 +301,7 @@ void MainComponent::setupAudio()
         // Auto-enable multi-resolution for testing
         content->setMLAnalysisEnabled(true);
         audioEngine_->setMLAnalysisEnabled(true);
+        if (spectrumDisplay_) spectrumDisplay_->setMLPreviewEnabled(true);
         SPM_LOG_INFO("[MainComponent] Auto-enabled multi-resolution analysis");
     }
     
@@ -409,6 +414,10 @@ void MainComponent::buttonClicked(juce::Button* button)
             startStopButton_.setColour(juce::TextButton::buttonColourId, 
                                        juce::Colours::red.withBrightness(0.4f));
             
+            // Reset auto-tracker cooldown so tracking starts immediately
+            if (pitchWaterfall_)
+                pitchWaterfall_->resetAutoTrackerCooldown();
+            
             // Status label shows input source info only (no Running/Stopped)
             updateStatusLabel();
         }
@@ -417,6 +426,15 @@ void MainComponent::buttonClicked(juce::Button* button)
     {
         settingsPanel_->setVisible(true);
         settingsPanel_->toFront(true);
+    }
+}
+
+void MainComponent::updateStatusLabel()
+{
+    if (audioEngine_)
+    {
+        juce::String sourceName = audioEngine_->getInputSourceName();
+        statusLabel_.setText("Source: " + sourceName, juce::dontSendNotification);
     }
 }
 

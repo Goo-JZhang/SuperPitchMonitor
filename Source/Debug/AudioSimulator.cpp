@@ -1,4 +1,5 @@
 #include "AudioSimulator.h"
+#include "../Utils/Logger.h"
 
 namespace spm {
 

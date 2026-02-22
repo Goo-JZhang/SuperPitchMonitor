@@ -8,11 +8,9 @@
 #include <atomic>
 #include <functional>
 
-// Platform-specific includes for crash handling
+// Platform-specific crash handling types (forward declared)
 #ifdef _WIN32
-    #include <windows.h>
-    #include <dbghelp.h>
-    #pragma comment(lib, "dbghelp.lib")
+    struct _EXCEPTION_POINTERS;  // Forward declaration instead of including windows.h
 #endif
 
 namespace spm {
@@ -86,9 +84,9 @@ private:
     static void installInvalidParameterHandler();
     
 #ifdef _WIN32
-    static LONG WINAPI sehHandler(EXCEPTION_POINTERS* pExceptionInfo);
-    static juce::String getSEHDescription(DWORD code);
-    static juce::String getStackTraceFromContext(const CONTEXT* context);
+    static long __stdcall sehHandler(void* pExceptionInfo);  // Use void* to avoid windows.h in header
+    static juce::String getSEHDescription(unsigned int code);  // DWORD = unsigned int
+    static juce::String getStackTraceFromContext(void* context);  // CONTEXT* as void*
 #endif
     
     static void terminateHandler();

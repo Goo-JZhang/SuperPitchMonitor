@@ -1,4 +1,4 @@
-/*
+﻿/*
   =============================================================================-
     MLPitchDetector.h
     Pitch detection using ONNX Runtime neural network inference

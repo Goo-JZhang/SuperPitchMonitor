@@ -6,49 +6,73 @@
 在音高瀑布流显示（PitchWaterfallDisplay）中，当用户无操作时，自动调整视图使频谱点/线保持在屏幕中间1/3区域，确保用户始终能看到最重要的音高信息。
 
 ### 1.2 核心概念
-- **中间1/3区域（Center Zone）**: 屏幕水平和垂直方向各1/3的中心区域
+- **中间1/3区域（Center Zone）**: 屏幕垂直方向（频率轴Y轴）中间1/3区域
 - **全局最佳频谱点**: 基于置信度和能量的综合评分确定
-- **最近频谱点**: 基于欧几里得距离计算
 - **用户操作冷却期**: 10秒无操作后恢复自动追踪
+
+**注意**: 横轴（X轴，时间）自动滚动，不参与区域划分。自动追踪只针对频率（Y轴）。
 
 ---
 
 ## 2. 界面区域定义
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         顶部1/3区域 (Top Zone)                    │
-│                                                                 │
-├─────────────────────────────────────────────────────────────────┤
-│                     ┌─────────────────────┐                     │
-│                     │                     │                     │
-│   左侧1/3区域       │   中间1/3区域        │   右侧1/3区域       │
-│   (Left Zone)       │   (Center Zone)     │   (Right Zone)      │
-│                     │                     │                     │
-│                     │   ◄── 目标区域 ──►   │                     │
-│                     │                     │                     │
-│                     └─────────────────────┘                     │
-├─────────────────────────────────────────────────────────────────┤
-│                      底部1/3区域 (Bottom Zone)                    │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+**只针对频率轴（Y轴）进行区域划分**，时间轴（X轴）自动滚动。
 
-图1: 屏幕区域划分（3×3网格）
+```
+│  高频率
+│
+│ ┌──────────────────────────────────────┐
+│ │           顶部1/3区域                 │  ◄── 高频率区域
+│ │          (Top 1/3 Zone)              │
+│ ├──────────────────────────────────────┤
+│ │                                      │
+│ │         中间1/3区域 (目标)            │  ◄── 目标区域：频谱点应对准这里
+│ │        (Center Zone)                 │      将最佳频谱点移到视图正中心
+│ │                                      │
+│ ├──────────────────────────────────────┤
+│ │           底部1/3区域                 │  ◄── 低频率区域
+│ │        (Bottom 1/3 Zone)             │
+│ └──────────────────────────────────────┘
+│
+│  低频率
+│
+└──────────────────────────────────────────► 时间 →
+
+图1: 频率轴区域划分（仅Y轴）
 ```
 
-### 2.1 区域判定算法
+### 2.1 区域判定算法（仅Y轴）
 ```cpp
-struct ScreenZone {
-    bool isInCenterZone(float x, float y, float width, float height) {
-        float centerLeft = width * 0.333f;
-        float centerRight = width * 0.667f;
-        float centerTop = height * 0.333f;
-        float centerBottom = height * 0.667f;
-        
-        return (x >= centerLeft && x <= centerRight &&
-                y >= centerTop && y <= centerBottom);
-    }
-};
+// 只判断频率（Y轴）是否在中心区域（中间1/3）
+bool isInCenterZone(float freq, float viewCenterFreq, float viewHeightSemitones) {
+    float midi = freqToMidi(freq);
+    float centerMidi = freqToMidi(viewCenterFreq);
+    float offset = midi - centerMidi;
+    
+    // 中心区域 = 视图高度的1/3（上下各1/6）
+    float minOffset = -(viewHeightSemitones / 6.0f);  // -1/6
+    float maxOffset = (viewHeightSemitones / 6.0f);   // +1/6
+    
+    return (offset >= minOffset && offset <= maxOffset);
+}
+
+// 计算频率到中心区域边界的距离（仅Y轴）
+// 返回0表示已在中心区域内
+float distanceToCenterZone(float freq, float viewCenterFreq, float viewHeightSemitones) {
+    float midi = freqToMidi(freq);
+    float centerMidi = freqToMidi(viewCenterFreq);
+    float offset = midi - centerMidi;
+    
+    float minOffset = -(viewHeightSemitones / 6.0f);
+    float maxOffset = (viewHeightSemitones / 6.0f);
+    
+    if (offset < minOffset)
+        return minOffset - offset;  // 低于中心区域
+    else if (offset > maxOffset)
+        return offset - maxOffset;  // 高于中心区域
+    else
+        return 0.0f;  // 在中心区域内
+}
 ```
 
 ---
@@ -188,20 +212,22 @@ void handleGlobalJump() {
 4. 置信度相同时，比较**能量**
 5. 以**平滑动画**方式将目标点移入中心区域（到达边界即可停止）
 
-**距离计算**:
+**距离计算**（仅Y轴 - 频率）:
 ```cpp
-float distanceToCenter(const PitchCandidate& pitch) {
-    // 如果已在中心区域，距离为0
-    if (isInCenterZone(pitch)) return 0.0f;
+float distanceToCenterZone(float freq, float viewCenterFreq, float viewHeightSemitones) {
+    float midi = freqToMidi(freq);
+    float centerMidi = freqToMidi(viewCenterFreq);
+    float offset = midi - centerMidi;
     
-    // 计算到中心区域最近边界的距离
-    float centerX = (centerLeft + centerRight) / 2.0f;
-    float centerY = (centerTop + centerBottom) / 2.0f;
+    float minOffset = -(viewHeightSemitones / 6.0f);  // -1/6
+    float maxOffset = (viewHeightSemitones / 6.0f);   // +1/6
     
-    float dx = pitch.screenX - centerX;
-    float dy = pitch.screenY - centerY;
-    
-    return std::sqrt(dx * dx + dy * dy);
+    if (offset < minOffset)
+        return minOffset - offset;  // 低于中心区域：返回到下边界的距离
+    else if (offset > maxOffset)
+        return offset - maxOffset;  // 高于中心区域：返回到上边界的距离
+    else
+        return 0.0f;  // 在中心区域内
 }
 ```
 
@@ -267,6 +293,17 @@ void smoothApproach(const PitchCandidate& target) {
 ---
 
 ## 4. 用户交互处理
+
+### 4.0 初始状态和启动行为
+
+**Timer 初始化**:
+- 冷却期初始状态设为**已过期**（`lastInteractionTime_ = Time(0)`）
+- 这样应用启动后自动追踪立即生效，无需等待
+
+**Start 按钮点击**:
+- 当用户点击 Start 开始音频分析时，重置冷却期为过期状态
+- 确保开始分析后自动追踪立即生效，第一时间追踪到正确频谱
+- 实现：`pitchWaterfall_->resetAutoTrackerCooldown()`
 
 ### 4.1 操作检测机制
 

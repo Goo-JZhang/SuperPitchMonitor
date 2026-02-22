@@ -1,4 +1,4 @@
-/*
+﻿/*
   =============================================================================-
     MLPitchDetector.cpp
     GPU Async Inference Implementation
@@ -105,14 +105,11 @@ bool MLPitchDetector::initialize(const Config& config)
             if (hasCUDA && HAS_CUDA_EP)
             {
                 DBG("ML: Enabling CUDA execution provider for NVIDIA GPU");
-                OrtCUDAProviderOptions cudaOptions;
-                cudaOptions.device_id = 0;  // Use first GPU
-                cudaOptions.arena_extend_strategy = 0;
-                cudaOptions.gpu_mem_limit = SIZE_MAX;
-                cudaOptions.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchHeuristic;
-                cudaOptions.do_copy_in_default_stream = 1;
+                OrtCUDAProviderOptionsV2* cudaOptions = nullptr;
+                Ort::ThrowOnError(Ort::GetApi().CreateCUDAProviderOptions(&cudaOptions));
                 
-                Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_CUDA(sessionOptions, &cudaOptions));
+                // Use AppendExecutionProvider_CUDA_V2
+                sessionOptions.AppendExecutionProvider_CUDA_V2(*cudaOptions);
                 gpuEnabled = true;
                 DBG("ML: CUDA enabled successfully - RTX 4080S ready!");
             }
@@ -193,7 +190,13 @@ bool MLPitchDetector::initialize(const Config& config)
         // Check if onnxruntime library is available
         try
         {
+#ifdef _WIN32
+            // Windows uses wchar_t for paths
+            std::wstring wModelPath(modelPathStr.begin(), modelPathStr.end());
+            ortSession_ = std::make_unique<Ort::Session>(*ortEnv_, wModelPath.c_str(), sessionOptions);
+#else
             ortSession_ = std::make_unique<Ort::Session>(*ortEnv_, modelPathStr.c_str(), sessionOptions);
+#endif
         }
         catch (const Ort::Exception& e)
         {

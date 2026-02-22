@@ -241,11 +241,62 @@ python3 tools/ci_build/build.py ${ONNX_BUILD_ARGS_STR}
     file(CHMOD ${BUILD_SCRIPT} PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
 endif()
 
-# Set byproducts based on platform
+# Set byproducts based on platform (library file to check)
 if(WIN32)
-    set(ONNXRUNTIME_BYPRODUCT ${ONNXRUNTIME_BUILD}/Release/onnxruntime.lib)
+    set(ONNXRUNTIME_BYPRODUCT ${ONNXRUNTIME_INSTALL}/onnxruntime.lib)
+    set(ONNXRUNTIME_BYPRODUCT_EXTRA ${ONNXRUNTIME_INSTALL}/onnxruntime.dll)
+elseif(APPLE)
+    set(ONNXRUNTIME_BYPRODUCT ${ONNXRUNTIME_INSTALL}/libonnxruntime.dylib)
+    set(ONNXRUNTIME_BYPRODUCT_EXTRA "")
 else()
-    set(ONNXRUNTIME_BYPRODUCT ${ONNXRUNTIME_BUILD}/Release/libonnxruntime.dylib)
+    # Linux and Android
+    set(ONNXRUNTIME_BYPRODUCT ${ONNXRUNTIME_INSTALL}/libonnxruntime.so)
+    set(ONNXRUNTIME_BYPRODUCT_EXTRA "")
+endif()
+
+# Check if ONNX Runtime is already built (skip rebuild)
+set(ONNXRUNTIME_ALREADY_BUILT FALSE)
+if(EXISTS ${ONNXRUNTIME_BYPRODUCT})
+    # Windows needs both .lib and .dll
+    if(WIN32 AND EXISTS ${ONNXRUNTIME_BYPRODUCT_EXTRA})
+        set(ONNXRUNTIME_ALREADY_BUILT TRUE)
+    # macOS/iOS/Linux/Android only need the library file
+    elseif(NOT WIN32)
+        set(ONNXRUNTIME_ALREADY_BUILT TRUE)
+    endif()
+endif()
+
+if(ONNXRUNTIME_ALREADY_BUILT)
+    message(STATUS "========================================")
+    message(STATUS "ONNX Runtime: Already built (skipping)")
+    message(STATUS "Library: ${ONNXRUNTIME_BYPRODUCT}")
+    message(STATUS "========================================")
+    
+    # Create a dummy imported target (no build needed)
+    add_custom_target(onnxruntime_build)
+    
+    # Set output variables
+    set(ONNXRUNTIME_INCLUDE_DIR ${ONNXRUNTIME_ROOT}/include/onnxruntime/core/session)
+    set(ONNXRUNTIME_INCLUDE_DIR_EXTRA 
+        ${ONNXRUNTIME_ROOT}/include
+        ${ONNXRUNTIME_ROOT}/include/onnxruntime/core/providers/coreml
+        ${ONNXRUNTIME_ROOT}/include/onnxruntime/core/providers/cuda
+        ${ONNXRUNTIME_ROOT}/include/onnxruntime/core/providers/dml
+    )
+    set(ONNXRUNTIME_LIBRARY_DIR ${ONNXRUNTIME_INSTALL})
+    
+    if(APPLE)
+        set(ONNXRUNTIME_LIBRARY ${ONNXRUNTIME_INSTALL}/libonnxruntime.dylib)
+    elseif(WIN32)
+        set(ONNXRUNTIME_LIBRARY ${ONNXRUNTIME_INSTALL}/onnxruntime.lib)
+    else()
+        set(ONNXRUNTIME_LIBRARY ${ONNXRUNTIME_INSTALL}/libonnxruntime.so)
+    endif()
+    
+    set(ONNXRUNTIME_BIN_DIR ${ONNXRUNTIME_INSTALL})
+    
+    # Skip the rest of this file
+    return()
 endif()
 
 ExternalProject_Add(
@@ -276,17 +327,17 @@ set(ONNXRUNTIME_INCLUDE_DIR_EXTRA
     ${ONNXRUNTIME_ROOT}/include/onnxruntime/core/providers/cuda
     ${ONNXRUNTIME_ROOT}/include/onnxruntime/core/providers/dml
 )
-set(ONNXRUNTIME_LIBRARY_DIR ${ONNXRUNTIME_BUILD}/Release)
+set(ONNXRUNTIME_LIBRARY_DIR ${ONNXRUNTIME_INSTALL})
 
 if(APPLE)
-    set(ONNXRUNTIME_LIBRARY ${ONNXRUNTIME_BUILD}/Release/libonnxruntime.dylib)
+    set(ONNXRUNTIME_LIBRARY ${ONNXRUNTIME_INSTALL}/libonnxruntime.dylib)
 elseif(WIN32)
-    set(ONNXRUNTIME_LIBRARY ${ONNXRUNTIME_BUILD}/Release/onnxruntime.lib)
+    set(ONNXRUNTIME_LIBRARY ${ONNXRUNTIME_INSTALL}/onnxruntime.lib)
 else()
-    set(ONNXRUNTIME_LIBRARY ${ONNXRUNTIME_BUILD}/Release/libonnxruntime.so)
+    set(ONNXRUNTIME_LIBRARY ${ONNXRUNTIME_INSTALL}/libonnxruntime.so)
 endif()
 
-set(ONNXRUNTIME_BIN_DIR ${ONNXRUNTIME_BUILD}/Release)
+set(ONNXRUNTIME_BIN_DIR ${ONNXRUNTIME_INSTALL})
 
 message(STATUS "========================================")
 message(STATUS "ONNX Runtime: Building from source")

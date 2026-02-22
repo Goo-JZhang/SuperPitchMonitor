@@ -119,6 +119,8 @@ target_sources(SuperPitchMonitor PRIVATE
     # Utils
     Source/Utils/Logger.cpp
     Source/Utils/Logger.h
+    Source/Utils/AutoTracker.cpp
+    Source/Utils/AutoTracker.h
     
     # Algorithms
     Source/Algorithms/PeakDetector.cpp
