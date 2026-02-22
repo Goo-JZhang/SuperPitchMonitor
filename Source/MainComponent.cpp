@@ -139,21 +139,21 @@ void MainComponent::connectSettingsCallbacks()
             pitchWaterfall_->setA4Frequency(freq);
         if (spectrumDisplay_)
             spectrumDisplay_->setA4Frequency(freq);
-        SPM_LOG_INFO("[Settings] A4 frequency changed to: " + juce::String(freq) + " Hz");
+        // A4 frequency changed - no log needed
     });
     
     // Scale mode changes
     content->onScaleModeChanged([this](bool useLog) {
         if (spectrumDisplay_)
             spectrumDisplay_->setLogFrequencyScale(useLog);
-        SPM_LOG_INFO("[Settings] Log scale: " + juce::String(useLog ? "enabled" : "disabled"));
+        // Log scale changed - no log needed
     });
     
     // Time window changes
     content->onTimeWindowChanged([this](float seconds) {
         if (pitchWaterfall_)
             pitchWaterfall_->setTimeWindow(seconds);
-        SPM_LOG_INFO("[Settings] Time window changed to: " + juce::String(seconds) + " s");
+        // Time window changed - no log needed
     });
     
     // Input source changes
@@ -181,7 +181,7 @@ void MainComponent::connectSettingsCallbacks()
             spectrumDisplay_->setTargetRefreshRate(fps);
         }
         
-        SPM_LOG_INFO("[Settings] FPS changed to: " + juce::String(fps < 0 ? "Unlimited" : juce::String(fps) + " Hz"));
+        // Target FPS changed - no log needed
     });
     
     // Buffer Size changes
@@ -191,8 +191,7 @@ void MainComponent::connectSettingsCallbacks()
             audioEngine_->setBufferSize(bufferSize);
         }
         float latencyMs = (bufferSize / 44100.0f) * 1000.0f;
-        SPM_LOG_INFO("[Settings] Buffer size changed to: " + juce::String(bufferSize) + 
-                     " samples (" + juce::String(latencyMs, 1) + " ms)");
+        // Buffer size changed - no log needed
     });
     
     // ML Analysis toggle
@@ -383,7 +382,8 @@ void MainComponent::buttonClicked(juce::Button* button)
             startStopButton_.setButtonText("Start");
             startStopButton_.setColour(juce::TextButton::buttonColourId, 
                                        juce::Colours::green.withBrightness(0.4f));
-            statusLabel_.setText("Stopped", juce::dontSendNotification);
+            // Status label shows input source info only (no Running/Stopped)
+            updateStatusLabel();
             
             // Clear displays when stopped
             if (pitchWaterfall_)
@@ -392,37 +392,25 @@ void MainComponent::buttonClicked(juce::Button* button)
                 pitchDisplay_->clear();
             if (spectrumDisplay_)
                 spectrumDisplay_->clear();
+            
+            // Reset input level and FPS display
+            inputLevelLabel_.setText("Input: -", juce::dontSendNotification);
+            fpsLabel_.setText("FPS: -", juce::dontSendNotification);
         }
         else
         {
             // ===== Output current Settings configuration =====
             SPM_LOG_INFO("========================================");
-            SPM_LOG_INFO("[START] ====== DETECTION STARTED ======");
-            SPM_LOG_INFO("[START] Input Source: " + audioEngine_->getInputSourceName());
-            SPM_LOG_INFO("[START] ML Analysis: " + juce::String(audioEngine_->isMLAnalysisEnabled() ? "ON" : "OFF"));
-            
-            // Get SettingsPanel configuration
-            if (settingsPanel_ && settingsPanel_->getContent())
-            {
-                auto* content = settingsPanel_->getContent();
-                SPM_LOG_INFO("[START] A4 Frequency: " + juce::String(content->getA4Frequency(), 1) + " Hz");
-                SPM_LOG_INFO("[START] Log Scale: " + juce::String(content->getUseLogScale() ? "ON" : "OFF"));
-                SPM_LOG_INFO("[START] Time Window: " + juce::String(content->getTimeWindow(), 1) + " s");
-                SPM_LOG_INFO("[START] Target FPS: " + juce::String(content->getTargetFPS()) + " Hz");
-            }
-            
-            SPM_LOG_INFO("[START] Sample Rate: " + juce::String(audioEngine_->getSampleRate(), 0) + " Hz");
-            SPM_LOG_INFO("[START] Buffer Size: " + juce::String(audioEngine_->getBufferSize()) + " samples");
-            SPM_LOG_INFO("========================================");
+            SPM_LOG_INFO("[START] Input: " + audioEngine_->getInputSourceName() + 
+                        " | ML: " + juce::String(audioEngine_->isMLAnalysisEnabled() ? "ON" : "OFF"));
             
             audioEngine_->start();
             startStopButton_.setButtonText("Stop");
             startStopButton_.setColour(juce::TextButton::buttonColourId, 
                                        juce::Colours::red.withBrightness(0.4f));
             
-            // Get input source name for display
-            juce::String sourceName = audioEngine_->getInputSourceName();
-            statusLabel_.setText("Running | " + sourceName, juce::dontSendNotification);
+            // Status label shows input source info only (no Running/Stopped)
+            updateStatusLabel();
         }
     }
     else if (button == &settingsButton_)
@@ -437,8 +425,7 @@ void MainComponent::onSpectrumData(const SpectrumData& data)
     static int count = 0;
     if (++count % 30 == 0)
     {
-        SPM_LOG_INFO("[UI] onSpectrumData: bins=" + juce::String(data.magnitudes.size())
-                     + " mags[10]=" + juce::String(data.magnitudes.size() > 10 ? data.magnitudes[10] : 0.0f, 4));
+        // Spectrum data received - no detailed log
     }
     
     // Spectrum data is used by UI only, TestServer gets data through pitch detection

@@ -535,9 +535,9 @@ def generate_comparison_table(comparison: List[Dict]) -> str:
                 <th>Expected Freq<br>(Hz)</th>
                 <th>FFT Mag<br>(dB)</th>
                 <th>Status</th>
-                <th>SPM Freq<br>Mean±Std (Hz)</th>
-                <th>Confidence<br>Mean±Std</th>
-                <th>Amplitude<br>Mean±Std</th>
+                <th>SPM Freq<br>Mean卤Std (Hz)</th>
+                <th>Confidence<br>Mean卤Std</th>
+                <th>Amplitude<br>Mean卤Std</th>
                 <th>Detection<br>Rate</th>
                 <th>H. Count<br>Mean</th>
             </tr>
@@ -556,9 +556,9 @@ def generate_comparison_table(comparison: List[Dict]) -> str:
         
         if detected and entry['spm']:
             spm = entry['spm']
-            freq_str = f"{spm['frequency_mean']:.1f}±{spm['frequency_std']:.1f}"
-            conf_str = f"{spm['confidence_mean']:.2f}±{spm['confidence_std']:.2f}"
-            amp_str = f"{spm['amplitude_mean']:.4f}±{spm['amplitude_std']:.4f}" if spm.get('amplitude_mean') else "N/A"
+            freq_str = f"{spm['frequency_mean']:.1f}卤{spm['frequency_std']:.1f}"
+            conf_str = f"{spm['confidence_mean']:.2f}卤{spm['confidence_std']:.2f}"
+            amp_str = f"{spm['amplitude_mean']:.4f}卤{spm['amplitude_std']:.4f}" if spm.get('amplitude_mean') else "N/A"
             rate_str = f"{spm['detection_rate']*100:.0f}%"
             h_count_str = f"{spm['harmonic_count_mean']:.1f}"
         else:

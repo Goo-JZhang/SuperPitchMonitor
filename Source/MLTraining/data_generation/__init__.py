@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-数据生成模块
+鏁版嵁鐢熸垚妯″潡
 
 Usage:
     from data_generation import WindowedSampleGenerator, HDF5DatasetWriter

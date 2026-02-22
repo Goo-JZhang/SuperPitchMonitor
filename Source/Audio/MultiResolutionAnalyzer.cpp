@@ -358,7 +358,7 @@ void BandAnalysisTask::calculateRefinedFrequencies(BandSpectrumData& output)
         float binFreq = output.frequencies[i];
         float refinedFreq = binFreq + phaseDiff * sampleRate / (twoPi * hopSize);
         
-        // Limit refined frequency to reasonable range (±50% of bin freq)
+        // Limit refined frequency to reasonable range (卤50% of bin freq)
         if (std::abs(refinedFreq - binFreq) > binFreq * 0.5f) {
             refinedFreq = binFreq;
         }

@@ -525,7 +525,7 @@ std::vector<MLPitchDetector::Detection> MLPitchDetector::postProcess(const float
             det.frequency = binIndexToFrequencyInterpolated(binIndexWithOffset, numBins);
             det.confidence = peakConfidence;
             
-            // Step 4: Accumulate energy from neighborhood (±2 bins)
+            // Step 4: Accumulate energy from neighborhood (卤2 bins)
             // This gives total energy of the detected pitch
             float totalEnergy = 0.0f;
             int energyWindow = 2;
