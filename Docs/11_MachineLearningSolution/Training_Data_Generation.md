@@ -38,13 +38,13 @@
 
 ## 2. 存储格式对比
 
-### 2.1 三种格式概览
+### 2.1 存储格式概览
 
-| 格式 | 适用场景 | 压缩率 | 读取速度 | 文件数量 |
-|------|---------|--------|---------|---------|
-| **HDF5** | 小规模测试(<1GB) | 高(zip) | 中等 | 单文件 |
-| **NumPy Shards** | 大规模训练(推荐) | 中 | 快 | 多文件(10-50) |
-| **Sparse Shards** | 超大规模(实验性) | 极高 | 快 | 分离存储 |
+| 格式 | 适用场景 | 压缩率 | 读取速度 | 文件数量 | 状态 |
+|------|---------|--------|---------|---------|------|
+| **HDF5** | 小规模测试(<1GB) | 高(zip) | 中等 | 单文件 | 已废弃 |
+| **NumPy Shards (V1)** | 中等规模 | 中 | 快 | 多文件 | 旧版兼容 |
+| **当前格式 (推荐)** | 大规模训练 | 高 | 快 | 多文件 | **当前推荐** |
 
 ### 2.2 NumPy Shards (推荐)
 
@@ -52,7 +52,7 @@
 
 ```
 TrainingData/sanity_shards/
-├── meta.pkl              # 元数据
+├── meta.json              # 元数据
 ├── shard_00000.npz       # 分片0 (~30MB)
 ├── shard_00001.npz       # 分片1
 ├── ...
@@ -92,35 +92,91 @@ from training.dataset_shards import ShardDataset
 dataset = ShardDataset('TrainingData/sanity_shards', cache_size=100)
 ```
 
-### 2.3 Sparse Shards (分离存储)
+### 2.3 当前格式 (推荐)
 
-**核心洞察**: 频谱数据非常稀疏（单音只有3-7个bin非零）
+**核心改进**:
+- 波形与真值分开存储
+- 真值合并 confs 和 energies，使用 npz 无损压缩
+- 波形保持 .npy 格式，支持内存映射
 
 **文件结构**:
 
 ```
-TrainingData/sanity_separate/
-├── meta.pkl
-├── waveforms/            # 波形分片 (不压缩)
+TrainingData/SingleSanity/
+├── meta.json
+├── waveforms/            # 波形分片 (不压缩，内存映射)
 │   ├── shard_00000.npy   # [N, 4096] float32
 │   ├── shard_00001.npy
 │   └── ...
-└── spectra/              # 稀疏频谱 (紧凑存储)
-    ├── indices_00000.npy   # [N, 7] int16 - 非零bin索引
-    ├── confs_00000.npy     # [N, 7] float16 - confidence值
-    ├── energies_00000.npy  # [N, 7] float16 - energy值
+└── targets/              # 真值分片 (压缩存储)
+    ├── shard_00000.npz   # 包含 confs, energies
+    │   ├── confs         # [N, 2048] float16 (压缩)
+    │   └── energies      # [N, 2048] float16 (压缩)
+    ├── shard_00000.indices.npy  # [N, K] int16 (调试信息，可选)
     └── ...
 ```
 
-**存储效率对比** (20480样本):
+**存储效率** (20480样本):
 
-| 数据类型 | 密集格式 | 稀疏格式 | 节省 |
-|---------|---------|---------|-----|
-| 波形 | 320 MB | 320 MB | - |
-| 频谱 | 320 MB | **0.8 MB** | **99.7%** |
-| **总计** | 640 MB | **321 MB** | **50%** |
+| 数据类型 | 大小 | 格式 | 说明 |
+|---------|------|------|------|
+| 波形 | ~320 MB | .npy | 不压缩，支持 mmap |
+| 真值 | ~5-10 MB | .npz | 无损压缩，自动解压 |
+| **总计** | **~330 MB** | - | 平衡读取速度和存储空间 |
 
-**注意**: 实际项目中使用np.savez_compressed后，HDF5和Shards格式已经压缩到~33MB，稀疏格式优势不明显。建议仅在**原始数据>10GB**时考虑。
+**优势**:
+- **波形**: .npy 格式支持内存映射，训练时按需加载，低内存占用
+- **真值**: .npz 自动压缩解压，节省存储空间
+- **合并存储**: confs 和 energies 在同一个文件，减少文件句柄
+
+**生成命令**:
+
+```bash
+cd Source/MLTraining/data_generation
+python3 generate_sanity.py \
+    --output ../../../TrainingData/SingleSanity \
+    --samples-per-bin 10 \
+    --shard-size-gb 1.0
+```
+
+**使用方式**:
+
+数据生成时使用:
+```python
+# 在数据生成脚本中 (data_generation/)
+from dataset_writer import DatasetWriter, generate_single_note
+
+# 创建数据集
+with DatasetWriter('output', shard_size_gb=1.0) as writer:
+    for bin_idx in range(2048):
+        sample = generate_single_note(bin_idx=bin_idx)
+        writer.add_sample(
+            waveform=sample['waveform'],
+            confs=sample['confs'],
+            energies=sample['energies']
+        )
+```
+
+训练时使用:
+```python
+# 在训练脚本中 (training/)
+from data_utils import DatasetReader
+
+# 内存映射模式 (推荐，低内存占用)
+dataset = DatasetReader('TrainingData/SingleSanity', preload=False)
+
+# 预加载模式 (适合小数据集)
+dataset = DatasetReader('TrainingData/SingleSanity', preload=True)
+
+# 预加载到GPU
+dataset = DatasetReader('TrainingData/SingleSanity', preload=True, device='cuda')
+
+# 获取样本
+sample = dataset[0]
+# sample['waveform']: [1, 4096]
+# sample['target_confidence']: [2048]
+# sample['target_energy']: [2048]
+```
 
 ### 2.4 HDF5 (已废弃)
 
@@ -441,7 +497,7 @@ python3 generate_sanity_shards.py \
 
 | 决策 | 选择 | 理由 |
 |------|------|------|
-| **存储格式** | NumPy Shards | 分片存储，内存映射，适合大数据集 |
+| **存储格式** | .npy + .npz | 波形 mmap 快速读取，真值压缩节省空间 |
 | **窗口生成** | 预生成固定窗口 | 避免滑动窗口的I/O和查询开销 |
 | **相位处理** | 随机初始相位 | 解决窗口位置敏感问题，提高鲁棒性 |
 | **多音上限** | 16个音 | 复杂和弦可能超过8个音 |
@@ -449,6 +505,8 @@ python3 generate_sanity_shards.py \
 | **能量策略** | 与置信度统一 | 不完整音能量打折，避免"抢占比" |
 | **能量计算** | 频域直接计算 | 比时域合成快~200倍 |
 | **标注位置** | 只标基频bin | 让网络学习泛音→基频映射 |
+| **真值存储** | confs + energies 合并 | 减少文件数，npz 自动压缩 |
+| **波形存储** | .npy 不压缩 | 支持内存映射，训练时按需加载 |
 
 ---
 
@@ -472,11 +530,14 @@ python3 generate_dataset.py \
 ### 10.2 使用数据集
 
 ```python
-from training.dataset_shards import MemoryCachedShardDataset
+from dataset_writer import DatasetReader
 from torch.utils.data import DataLoader
 
-# 加载数据集
-dataset = MemoryCachedShardDataset('TrainingData/sanity_shards')
+# 加载数据集 (内存映射模式，低内存占用)
+dataset = DatasetReader('TrainingData/SingleSanity', preload=False)
+
+# 或预加载模式 (适合小数据集)
+dataset = DatasetReader('TrainingData/SingleSanity', preload=True)
 
 # 创建DataLoader
 loader = DataLoader(dataset, batch_size=64, shuffle=True)
@@ -488,20 +549,56 @@ for batch in loader:
     target_energy = batch['target_energy']  # [B, 2048]
 ```
 
-### 10.3 文件命名规范
+### 10.3 创建自定义数据集
+
+```python
+from dataset_writer import DatasetWriter, generate_single_note
+
+# 使用 DatasetWriter 创建自定义数据集
+with DatasetWriter('my_dataset', shard_size_gb=1.0) as writer:
+    for bin_idx in range(2048):
+        for _ in range(10):  # 每个bin 10个样本
+            sample = generate_single_note(bin_idx=bin_idx)
+            writer.add_sample(
+                waveform=sample['waveform'],
+                confs=sample['confs'],
+                energies=sample['energies']
+            )
+    
+    writer.finalize({'description': 'My custom dataset'})
+```
+
+### 10.4 文件命名规范
 
 ```
 TrainingData/
-├── sanity_shards/          # Sanity check (20K samples)
+├── SingleSanity/         # Sanity check (20K samples)
 │   ├── meta.pkl
-│   ├── shard_00000.npz
-│   └── ...
-├── train_shards/           # 训练集 (1M+ samples)
+│   ├── waveforms/
+│   │   ├── shard_00000.npy
+│   │   └── ...
+│   └── targets/
+│       ├── shard_00000.npz
+│       └── ...
+├── train/                  # 训练集 (1M+ samples)
 │   ├── meta.pkl
-│   ├── shard_00000.npz
-│   └── ...
+│   ├── waveforms/
+│   └── targets/
 └── test_data/              # 小规模测试
     └── sanity_check_1000.hdf5
+
+Source/MLTraining/
+├── data_generation/        # 数据生成
+│   ├── dataset_writer.py   # 数据写入工具 (DatasetWriter, generate_single_note)
+│   ├── generate_sanity.py  # Sanity数据集生成脚本
+│   ├── generate_polyphony.py # 多音数据集生成脚本
+│   ├── energy_calculator.py  # 能量计算工具
+│   └── sample_generator.py   # 样本生成核心逻辑
+└── training/               # 训练
+    ├── data_utils.py       # 数据加载工具 (DatasetReader, load_dataset)
+    ├── modeloutput_util.py # 模型导出工具
+    ├── train.py            # 训练脚本
+    └── train_live.py       # 实时训练脚本
 ```
 
 ---

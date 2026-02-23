@@ -14,11 +14,13 @@ from pathlib import Path
 from datetime import datetime
 
 
-def export_to_onnx_with_metadata(model, output_dir, timestamp, training_info=None):
+def export_model_with_metadata(model, output_dir, timestamp, training_info=None):
     """
-    导出ONNX模型并创建元数据文件
+    导出模型（ONNX + PyTorch）并创建元数据文件
     
-    文件名格式: {ModelName}_{timestamp}.onnx
+    文件名格式: 
+    - ONNX: {ModelName}_{timestamp}.onnx
+    - PyTorch: {ModelName}_{timestamp}.pth
     元数据文件: {ModelName}_{timestamp}.txt
     
     Args:
@@ -66,18 +68,41 @@ def export_to_onnx_with_metadata(model, output_dir, timestamp, training_info=Non
     # 确保输出目录存在
     onnx_path.parent.mkdir(parents=True, exist_ok=True)
     
-    # 导出ONNX - 确保输入与模型在同一设备
+    # 导出ONNX
+    print(f"[DEBUG] Preparing dummy input...")
     device = next(model.parameters()).device
     dummy_input = torch.randn(1, 1, 4096, device=device)
-    torch.onnx.export(
-        model,
-        dummy_input,
-        onnx_path,
-        input_names=['input'],
-        output_names=['output'],
-        dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}},
-        opset_version=11
-    )
+    print(f"[DEBUG] Dummy input shape: {dummy_input.shape}, device: {device}")
+    
+    # 使用传统导出器 (更稳定)
+    print(f"[DEBUG] Starting ONNX export to: {onnx_path}")
+    try:
+        torch.onnx.export(
+            model,
+            dummy_input,
+            onnx_path,
+            input_names=['input'],
+            output_names=['output'],
+            dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}},
+            opset_version=17,
+            do_constant_folding=True,
+        )
+        print(f"[DEBUG] ONNX export completed successfully")
+    except Exception as e:
+        print(f"[DEBUG] ONNX export failed with error: {e}")
+        raise
+    
+    # 导出 PyTorch 模型 (.pth)
+    pth_filename = f"{model_name}_{timestamp}.pth"
+    pth_path = Path(output_dir) / pth_filename
+    
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'model_name': model_name,
+        'timestamp': timestamp,
+        'training_info': training_info,
+    }, pth_path)
+    print(f"[DEBUG] PyTorch model saved: {pth_path}")
     
     # 创建元数据文件 (同名.txt)
     meta_filename = f"{model_name}_{timestamp}.txt"
@@ -91,24 +116,26 @@ def export_to_onnx_with_metadata(model, output_dir, timestamp, training_info=Non
         f"{k}: {v}" for k, v in (training_info or {}).items()
     ) if training_info else "N/A"
     
-    meta_content = f"""# 模型元数据
+    meta_content = f"""# Model Metadata
 Model Name: {model_name}
 Export Time: {timestamp}
 ONNX File: {onnx_filename}
+PyTorch File: {pth_filename}
 
-# 模型架构
+# Model Architecture
 Total Parameters: {param_count:,} ({param_count/1e6:.2f}M)
 Input Shape: [batch, 1, 4096]
 Output Shape: [batch, 2048, 2]  # [confidence, energy]
 
-# 训练信息
+# Training Information
 {training_info_str}
 
-# 文件位置
+# File Location
 - ONNX: {onnx_path.absolute()}
+- PyTorch: {pth_path.absolute()}
 - Meta: {meta_path.absolute()}
 
-# 使用示例
+# Usage Example (ONNX)
 import onnxruntime as ort
 import numpy as np
 
@@ -116,6 +143,15 @@ session = ort.InferenceSession("{onnx_filename}")
 input_data = np.random.randn(1, 1, 4096).astype(np.float32)
 output = session.run(None, {{'input': input_data}})
 # output[0].shape = [1, 2048, 2]
+
+# Usage Example (PyTorch)
+import torch
+from PitchNetBaseline import PitchNetBaseline
+
+model = PitchNetBaseline()
+checkpoint = torch.load("{pth_filename}")
+model.load_state_dict(checkpoint['model_state_dict'])
+model.eval()
 """
     
     with open(meta_path, 'w', encoding='utf-8') as f:
@@ -173,5 +209,5 @@ def format_training_info(config, best_val_loss, device, epochs_completed=None):
     return info
 
 
-# 保持向后兼容
-export_to_onnx = export_to_onnx_with_metadata
+# 导出函数
+__all__ = ['export_model_with_metadata', 'format_training_info', 'get_model_info']

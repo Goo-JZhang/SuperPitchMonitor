@@ -94,11 +94,7 @@ private:
     juce::Time lastInteractionTime_;
     juce::Time targetSetTime_;
     
-    // Detection state - track whether we have valid detections
-    bool lastFrameHadDetection_ = false;
-    int consecutiveEmptyFrames_ = 0;
-    static constexpr int EMPTY_FRAMES_THRESHOLD = 3;  // Pause tracking after 3 empty frames
-    
+    // Note: No frame counting - pause immediately when no detection
     // Current target for smooth approach
     float targetFreq_ = 0.0f;
     float currentTargetConfidence_ = 0.0f;
@@ -108,10 +104,6 @@ private:
     float approachStartFreq_ = 0.0f;
     float approachTargetFreq_ = 0.0f;
     double approachProgress_ = 0.0;
-    
-    // Pending target - store target when no valid detection to resume later
-    bool hasPendingTarget_ = false;
-    float pendingTargetFreq_ = 0.0f;
     
     // Center zone: middle 1/3 of vertical range
     // Returns min and max MIDI note offset from center

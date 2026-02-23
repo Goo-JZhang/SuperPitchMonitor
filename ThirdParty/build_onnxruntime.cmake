@@ -2,7 +2,7 @@
 # Build ONNX Runtime from source with platform-specific GPU support
 # Similar to how JUCE is handled
 
-set(ONNXRUNTIME_VERSION "1.20.1")
+set(ONNXRUNTIME_VERSION "1.24.2")
 
 # Check CUDNN_HOME from environment if not set in CMake
 if(NOT DEFINED CUDNN_HOME)

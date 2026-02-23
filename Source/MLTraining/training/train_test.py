@@ -15,7 +15,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, random_split, ConcatDataset, ConcatDataset
+from torch.nn import Module
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 # 跨平台matplotlib后端设置
@@ -39,8 +40,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / 'Model'))
 
 from PitchNetBaseline import PitchNetBaseline
-from training_util import export_to_onnx_with_metadata, format_training_info
-from dataset import MemoryCachedDataset
+from loss import PitchDetectionLoss
+from modeloutput_utils import export_model_with_metadata, format_training_info
+from dataset import DatasetReader
 
 
 class LivePlot:
@@ -129,96 +131,16 @@ class LivePlot:
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
     
+    def save(self, filepath):
+        """保存图表到文件"""
+        self.fig.savefig(filepath, dpi=150, bbox_inches='tight')
+    
     def close(self):
         plt.ioff()
         plt.close()
 
 
-class PitchDetectionLoss(nn.Module):
-    """音高检测损失函数"""
-    
-    def __init__(self, conf_weight=1.0, energy_weight=0.5, sparsity_weight=0.01):
-        super().__init__()
-        self.conf_weight = conf_weight
-        self.energy_weight = energy_weight
-        self.sparsity_weight = sparsity_weight
-    
-    def forward(self, pred, target_conf, target_energy):
-        """
-        Args:
-            pred: [B, 2048, 2] - model output
-            target_conf: [B, 2048]
-            target_energy: [B, 2048]
-        """
-        pred_conf = pred[..., 0]
-        pred_energy = pred[..., 1]
-        
-        # Confidence loss
-        loss_conf = F.binary_cross_entropy(pred_conf, target_conf)
-        
-        # Energy loss (soft weighted)
-        weights = target_conf
-        mse_per_bin = F.mse_loss(pred_energy, target_energy, reduction='none')
-        loss_energy = (weights * mse_per_bin).sum() / (weights.sum() + 1e-8)
-        
-        # Sparsity
-        loss_sparsity = pred_conf.mean()
-        
-        total = (self.conf_weight * loss_conf + 
-                self.energy_weight * loss_energy +
-                self.sparsity_weight * loss_sparsity)
-        
-        return {
-            'total': total.item(),
-            'confidence': loss_conf.item(),
-            'energy': loss_energy.item(),
-            'sparsity': loss_sparsity.item()
-        }
-
-
-class PitchDataset(torch.utils.data.Dataset):
-    """HDF5数据集加载器"""
-    
-    def __init__(self, hdf5_path):
-        import h5py
-        self.hdf5_path = hdf5_path
-        
-        with h5py.File(hdf5_path, 'r') as f:
-            self.num_samples = f.attrs['num_samples']
-        
-        self._h5_file = None
-    
-    def __len__(self):
-        return self.num_samples
-    
-    def _get_h5(self):
-        if self._h5_file is None:
-            import h5py
-            self._h5_file = h5py.File(self.hdf5_path, 'r')
-        return self._h5_file
-    
-    def __getitem__(self, idx):
-        h5 = self._get_h5()
-        
-        waveform = torch.from_numpy(h5['data/waveform'][idx].copy()).float()
-        target_conf = torch.from_numpy(h5['data/target_confidence'][idx].copy()).float()
-        target_energy = torch.from_numpy(h5['data/target_energy'][idx].copy()).float()
-        
-        waveform = waveform.unsqueeze(0)  # [1, 4096]
-        
-        return {
-            'waveform': waveform,
-            'target_confidence': target_conf,
-            'target_energy': target_energy
-        }
-    
-    def close(self):
-        if self._h5_file is not None:
-            self._h5_file.close()
-            self._h5_file = None
-
-
-def train_epoch(model, dataloader, optimizer, criterion, device):
+def train_epoch(model, dataloader, optimizer, device, criterion):
     """训练一个epoch"""
     model.train()
     
@@ -227,38 +149,32 @@ def train_epoch(model, dataloader, optimizer, criterion, device):
     
     for batch in dataloader:
         waveform = batch['waveform'].to(device)
-        target_conf = batch['target_confidence'].to(device)
-        target_energy = batch['target_energy'].to(device)
+        target_conf = batch['target_confidence'].to(device).float()
+        target_energy = batch['target_energy'].to(device).float()
         
         optimizer.zero_grad()
         
         pred = model(waveform)
         
         # 计算损失
-        pred_conf = pred[..., 0]
-        pred_energy = pred[..., 1]
+        pred_conf = pred[..., 0].float()
+        pred_energy_raw = pred[..., 1].float()
         
-        loss_conf = F.binary_cross_entropy(pred_conf, target_conf)
-        weights = target_conf
-        mse_per_bin = F.mse_loss(pred_energy, target_energy, reduction='none')
-        loss_energy = (weights * mse_per_bin).sum() / (weights.sum() + 1e-8)
-        loss_sparsity = pred_conf.mean()
+        losses = criterion(pred_conf, pred_energy_raw, target_conf, target_energy)
         
-        loss = loss_conf + 0.5 * loss_energy + 0.01 * loss_sparsity
-        
-        loss.backward()
+        losses['total'].backward()
         optimizer.step()
         
-        metrics_sum['total'] += loss.item()
-        metrics_sum['confidence'] += loss_conf.item()
-        metrics_sum['energy'] += loss_energy.item()
-        metrics_sum['sparsity'] += loss_sparsity.item()
+        metrics_sum['total'] += losses['total'].item()
+        metrics_sum['confidence'] += losses['confidence'].item()
+        metrics_sum['energy'] += losses['energy'].item()
+        metrics_sum['sparsity'] += losses['sparsity'].item()
         count += 1
     
     return {k: v / count for k, v in metrics_sum.items()}
 
 
-def validate(model, dataloader, device):
+def validate(model, dataloader, device, criterion):
     """验证"""
     model.eval()
     
@@ -268,26 +184,20 @@ def validate(model, dataloader, device):
     with torch.no_grad():
         for batch in dataloader:
             waveform = batch['waveform'].to(device)
-            target_conf = batch['target_confidence'].to(device)
-            target_energy = batch['target_energy'].to(device)
+            target_conf = batch['target_confidence'].to(device).float()
+            target_energy = batch['target_energy'].to(device).float()
             
             pred = model(waveform)
             
-            pred_conf = pred[..., 0]
-            pred_energy = pred[..., 1]
+            pred_conf = pred[..., 0].float()
+            pred_energy_raw = pred[..., 1].float()
             
-            loss_conf = F.binary_cross_entropy(pred_conf, target_conf)
-            weights = target_conf
-            mse_per_bin = F.mse_loss(pred_energy, target_energy, reduction='none')
-            loss_energy = (weights * mse_per_bin).sum() / (weights.sum() + 1e-8)
-            loss_sparsity = pred_conf.mean()
+            losses = criterion(pred_conf, pred_energy_raw, target_conf, target_energy)
             
-            loss = loss_conf + 0.5 * loss_energy + 0.01 * loss_sparsity
-            
-            metrics_sum['total'] += loss.item()
-            metrics_sum['confidence'] += loss_conf.item()
-            metrics_sum['energy'] += loss_energy.item()
-            metrics_sum['sparsity'] += loss_sparsity.item()
+            metrics_sum['total'] += losses['total'].item()
+            metrics_sum['confidence'] += losses['confidence'].item()
+            metrics_sum['energy'] += losses['energy'].item()
+            metrics_sum['sparsity'] += losses['sparsity'].item()
             count += 1
     
     return {k: v / count for k, v in metrics_sum.items()}
@@ -298,13 +208,11 @@ def main():
     script_dir = Path(__file__).parent.resolve()
     project_root = script_dir.parent.parent.parent  # 到项目根目录
     
-    # 默认使用20K数据集,可切换为1000样本快速测试
-    data_path = str(project_root / 'TrainingData' / 'sanity_check_20k.hdf5')
-    # data_path = str(project_root / 'TrainingData' / 'test_data' / 'sanity_check_1000.hdf5')
-    batch_size = 32
+    # 训练参数
+    batch_size = 128  # RTX 4080S 可用更大batch
     epochs = 50
     lr = 0.001
-    val_split = 0.1
+    val_split = 0.02  # 2%验证集，每类数据单独拆分
     # 自动选择设备: CUDA > MPS (Apple Silicon) > CPU
     if torch.cuda.is_available():
         device = torch.device('cuda')
@@ -324,45 +232,72 @@ def main():
         print(f"  CUDA Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
         print(f"  cuDNN benchmark: enabled")
     
-    print(f"Data: {data_path}")
+    # 硬编码加载指定数据集（后续添加新数据集需手动修改此处）
+    data_root = project_root / 'TrainingData'
+    data_subdirs = ['SingleSanity', 'NoiseDatasetV2']  # 使用V2版本噪声数据（31种×1000=31000样本）
     
-    # 数据集 - 使用内存缓存避免IO瓶颈
-    full_dataset = MemoryCachedDataset(data_path)
-    val_size = int(len(full_dataset) * val_split)
-    train_size = len(full_dataset) - val_size
-    train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
+    print(f"Loading {len(data_subdirs)} dataset type(s): {data_subdirs}")
+    train_datasets = []
+    val_datasets = []
+
+    for subdir in data_subdirs:
+        data_dir = data_root / subdir
+        if not (data_dir / 'meta.json').exists():
+            print(f"  Warning: {subdir} not found or invalid, skipping...")
+            continue
+        ds = DatasetReader(str(data_dir), preload=True, device=str(device))
+        n_val = max(1, int(len(ds) * val_split))
+        n_train = len(ds) - n_val
+        ds_train, ds_val = random_split(ds, [n_train, n_val])
+        train_datasets.append(ds_train)
+        val_datasets.append(ds_val)
+        print(f"  {subdir:20s}: {len(ds):6d} samples -> Train: {n_train:6d}, Val: {n_val:4d}")
+
+    # 合并所有类型的训练和验证集
+    train_dataset = ConcatDataset(train_datasets)
+    val_dataset = ConcatDataset(val_datasets)
     
     # 内存数据集不需要多进程 workers
+    # DataLoader (pin_memory 禁用，因为数据可能已在 GPU)
     train_loader = DataLoader(
         train_dataset, 
         batch_size=batch_size, 
         shuffle=True,
-        num_workers=0,  # 内存数据不需要多进程
-        pin_memory=(device.type == 'cuda')
+        num_workers=0,
+        pin_memory=False
     )
     val_loader = DataLoader(
         val_dataset, 
         batch_size=batch_size,
         num_workers=0,
-        pin_memory=(device.type == 'cuda')
+        pin_memory=False
     )
     
     # 模型
     model = PitchNetBaseline().to(device)
     print(f"Model parameters: {model.count_parameters()/1e6:.2f}M")
     
-    # GPU预热 (MPS需要编译shader, CUDA需要warmup)
+    # GPU预热 (MPS需要编译shader, CUDA需要warmup + cuDNN算法搜索)
     if device.type in ['mps', 'cuda']:
         print("Warming up GPU...")
         with torch.no_grad():
-            _ = model(torch.randn(4, 1, 4096).to(device))
+            # 使用实际batch size预热，触发cuDNN算法搜索
+            warmup_batch = batch_size
+            dummy_input = torch.randn(warmup_batch, 1, 4096).to(device)
+            _ = model(dummy_input)
         if device.type == 'cuda':
             torch.cuda.synchronize()
         print("Ready!")
     
-    # 优化器
+    # 优化器和损失函数
     optimizer = AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
+    criterion = PitchDetectionLoss(
+        conf_weight=1.0,
+        energy_weight=0.3,
+        sparsity_weight=0.01,
+        energy_loss_type='kl'
+    ).to(device)
     
     # 可视化
     live_plot = LivePlot()
@@ -370,20 +305,25 @@ def main():
     # 训练循环
     best_val_loss = float('inf')
     
+    interrupted = False
     try:
         for epoch in range(1, epochs + 1):
             start_time = time.time()
             
-            train_metrics = train_epoch(model, train_loader, optimizer, None, device)
+            train_metrics = train_epoch(model, train_loader, optimizer, device, criterion)
             
-            # MPS同步以确保准确计时
+            # 同步以确保准确计时
             if device.type == 'mps':
                 torch.mps.synchronize()
+            elif device.type == 'cuda':
+                torch.cuda.synchronize()
             
-            val_metrics = validate(model, val_loader, device)
+            val_metrics = validate(model, val_loader, device, criterion)
             
             if device.type == 'mps':
                 torch.mps.synchronize()
+            elif device.type == 'cuda':
+                torch.cuda.synchronize()
             
             current_lr = optimizer.param_groups[0]['lr']
             scheduler.step()
@@ -402,9 +342,9 @@ def main():
                 }, '../../../MLModel/checkpoints/best_model.pth')
             
             elapsed = time.time() - start_time
-            print(f"Epoch {epoch}/{epochs} - {elapsed:.1f}s - "
-                  f"Train: {train_metrics['total']:.4f}, "
-                  f"Val: {val_metrics['total']:.4f}, "
+            print(f"Epoch {epoch:2d}/{epochs} | {elapsed:.1f}s | "
+                  f"Train: {train_metrics['total']:.4f} (c:{train_metrics['confidence']:.3f} e:{train_metrics['energy']:.3f}) | "
+                  f"Val: {val_metrics['total']:.4f} (c:{val_metrics['confidence']:.3f} e:{val_metrics['energy']:.3f}) | "
                   f"LR: {current_lr:.6f}")
     
     except KeyboardInterrupt:
@@ -416,7 +356,6 @@ def main():
     
     finally:
         live_plot.close()
-        dataset.close()
         
         # 保存最终模型
         final_path = '../../../MLModel/checkpoints/final_model.pth'
@@ -430,34 +369,47 @@ def main():
         if not interrupted:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             try:
+                # 准备模型导出（eval模式，移到CPU）
+                model.eval()
+                model.cpu()
+                
                 # 构建训练信息
                 training_info = format_training_info(
-                    config={'data_path': data_path, 'epochs': epochs, 
+                    config={'data_subdirs': data_subdirs, 'epochs': epochs, 
                             'batch_size': batch_size, 'lr': lr},
                     best_val_loss=best_val_loss,
                     device=device
                 )
                 
-                onnx_path = export_to_onnx_with_metadata(
-                    model, '../../../MLModel', timestamp, training_info
+                # 使用绝对路径
+                mlmodel_dir = Path(project_root) / 'MLModel'
+                mlmodel_dir.mkdir(parents=True, exist_ok=True)
+                
+                print(f"\nExporting ONNX to: {mlmodel_dir}")
+                onnx_path = export_model_with_metadata(
+                    model, str(mlmodel_dir), timestamp, training_info
                 )
-                onnx_msg = f"ONNX exported: {onnx_path.name}"
+                onnx_msg = f"ONNX exported: {onnx_path}"
+                print(f"Successfully exported: {onnx_path}")
             except Exception as e:
+                import traceback
                 onnx_msg = f"ONNX export failed: {e}"
+                print(f"\nONNX Export Error: {e}")
+                traceback.print_exc()
             
             # 明显的完成提示
             print("\n" + "="*70)
-            print("🎉  TRAINING COMPLETED SUCCESSFULLY!  🎉")
+            print("TRAINING COMPLETED SUCCESSFULLY!")
             print("="*70)
-            print(f"✓ Best model:    ../../../MLModel/checkpoints/best_model.pth")
-            print(f"✓ Final model:   {final_path}")
-            print(f"✓ {onnx_msg}")
-            print(f"✓ Total epochs:  {epochs}")
-            print(f"✓ Best val loss: {best_val_loss:.6f}")
+            print(f"Best model:    ../../../MLModel/checkpoints/best_model.pth")
+            print(f"Final model:   {final_path}")
+            print(f"{onnx_msg}")
+            print(f"Total epochs:  {epochs}")
+            print(f"Best val loss: {best_val_loss:.6f}")
             print("="*70)
         else:
             print("\n" + "="*70)
-            print("⚠️  TRAINING INTERRUPTED")
+            print("TRAINING INTERRUPTED")
             print("="*70)
             print(f"Model saved at epoch {epoch}")
             print("="*70)

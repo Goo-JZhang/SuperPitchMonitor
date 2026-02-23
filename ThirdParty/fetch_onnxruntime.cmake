@@ -1,7 +1,7 @@
 # fetch_onnxruntime.cmake
 # Automatically downloads ONNX Runtime with GPU support for current platform
 
-set(ONNXRUNTIME_VERSION "1.16.3")
+set(ONNXRUNTIME_VERSION "1.24.2")
 
 # Use centralized path
 if(NOT DEFINED ONNXRUNTIME_DIR)

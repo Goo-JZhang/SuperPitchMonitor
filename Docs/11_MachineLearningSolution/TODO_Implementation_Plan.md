@@ -479,20 +479,28 @@ class ShardDataset(torch.utils.data.Dataset):
 
 ### 2.4 存储格式选择
 
-#### 2.4.1 NumPy Shards (推荐)
+#### 2.4.1 当前格式 (推荐)
 
-**优势**:
-- 分片存储（每片~30MB），避免单文件过大
-- 内存映射(mmap)，按需加载，低内存占用
-- 随机相位增强，提高模型鲁棒性
+**架构设计**:
+- **dataset_writer.py**: 抽象工具类，管理数据存储/分片/压缩
+- **generate_*.py**: 具体生成脚本，只关注数据生成逻辑
+
+**DatasetWriter 功能**:
+- 自动分片管理 (按波形数据大小)
+- 波形 .npy 不压缩 (支持内存映射)
+- 真值 .npz 压缩 (confs + energies 合并)
+- 上下文管理器支持 (`with` 语句)
 
 **文件结构**:
 ```
-TrainingData/sanity_shards/
-├── meta.pkl              # 元数据
-├── shard_00000.npz       # 分片0 (~30MB)
-├── shard_00001.npz
-└── ...
+TrainingData/SingleSanity/
+├── meta.pkl
+├── waveforms/            # .npy 格式，不压缩，支持 mmap
+│   ├── shard_00000.npy   # [N, 4096] float32
+│   └── ...
+└── targets/              # .npz 格式，confs + energies 合并压缩
+    ├── shard_00000.npz   # confs: [N, 2048], energies: [N, 2048]
+    └── ...
 ```
 
 **存储估算** (20K样本):
@@ -500,14 +508,35 @@ TrainingData/sanity_shards/
 | 格式 | 大小 | 读取速度 | 适用场景 |
 |------|-----|---------|---------|
 | HDF5 | 33 MB | 5500 s/s | 小规模测试 |
-| **Shards** | **291 MB** | **9000 s/s** | **大规模训练** ✅ |
+| Shards V1 | 291 MB | 9000 s/s | 旧版兼容 |
+| **当前格式** | **~330 MB** | **9000 s/s** | **大规模训练** ✅ |
 
 **生成命令**:
 ```bash
-python3 generate_sanity_shards.py \
-    --output ../../../TrainingData/sanity_shards \
+# Sanity 数据集 (单音)
+python3 generate_sanity.py \
+    --output ../../../TrainingData/SingleSanity \
     --samples-per-bin 10 \
-    --shard-size 2048
+    --shard-size-gb 1.0
+
+# 多音数据集
+python3 generate_polyphony.py \
+    --output ../../../TrainingData/Polyphony \
+    --num-samples 10000
+```
+
+**自定义数据集**:
+```python
+from data_generation.dataset_writer import DatasetWriter, generate_single_note
+
+with DatasetWriter('my_dataset', shard_size_gb=1.0) as writer:
+    for bin_idx in range(2048):
+        sample = generate_single_note(bin_idx=bin_idx)
+        writer.add_sample(
+            waveform=sample['waveform'],
+            confs=sample['confs'],
+            energies=sample['energies']
+        )
 ```
 
 #### 2.4.2 随机相位增强 (关键！)

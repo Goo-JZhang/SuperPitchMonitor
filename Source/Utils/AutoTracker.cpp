@@ -246,33 +246,12 @@ bool AutoTracker::update(const std::vector<PitchCandidate>& currentPitches,
         return false;
     }
     
-    // Track detection state for intelligent pause/resume
-    if (hasValidDetection)
+    // No valid detection -> pause tracking immediately
+    if (!hasValidDetection)
     {
-        // We have valid detection - reset empty frame counter
-        consecutiveEmptyFrames_ = 0;
-        lastFrameHadDetection_ = true;
-    }
-    else
-    {
-        // No valid detection - increment counter
-        consecutiveEmptyFrames_++;
-        
-        // If we've had too many empty frames, pause tracking
-        if (consecutiveEmptyFrames_ >= EMPTY_FRAMES_THRESHOLD)
-        {
-            lastFrameHadDetection_ = false;
-            isApproaching_ = false;
-            trackingActive_ = false;
-            return false;
-        }
-        
-        // During brief gaps (1-2 frames), continue with pending target if any
-        if (!hasPendingTarget_)
-        {
-            trackingActive_ = false;
-            return false;
-        }
+        trackingActive_ = false;
+        isApproaching_ = false;
+        return false;
     }
     
     trackingActive_ = true;
@@ -286,34 +265,15 @@ bool AutoTracker::update(const std::vector<PitchCandidate>& currentPitches,
     }
     
     // Case 3: Already have points in center zone - do nothing
-    if (!validPitches.empty() && 
-        hasPointInCenterZone(currentPitches, currentViewCenterFreq, viewHeightSemitones))
+    if (hasPointInCenterZone(currentPitches, currentViewCenterFreq, viewHeightSemitones))
     {
         isApproaching_ = false;
-        hasPendingTarget_ = false;
         return false;
     }
     
-    // No valid pitches on this frame - check if we should use pending target
+    // No valid pitches - do nothing (already checked above, but keep for safety)
     if (validPitches.empty())
     {
-        if (hasPendingTarget_ && isApproaching_)
-        {
-            // Continue approaching the pending target (brief noise gap)
-            outNewViewCenterFreq = computeApproachPosition(currentViewCenterFreq, 
-                                                            pendingTargetFreq_, 
-                                                            deltaTime);
-            
-            // Check if we've reached the pending target
-            if (isInCenterZone(pendingTargetFreq_, outNewViewCenterFreq, viewHeightSemitones))
-            {
-                isApproaching_ = false;
-                hasPendingTarget_ = false;
-            }
-            
-            return outNewViewCenterFreq != currentViewCenterFreq;
-        }
-        
         isApproaching_ = false;
         return false;
     }
@@ -322,7 +282,7 @@ bool AutoTracker::update(const std::vector<PitchCandidate>& currentPitches,
     float targetConf = 0.0f;
     
     // Case 1: No points visible on screen at all - global jump
-    // Check if any pitch is within the current view (within ±viewHeightSemitones/2)
+    // Check if any pitch is within the current view
     bool hasPointsInView = false;
     float viewHalfHeight = viewHeightSemitones / 2.0f;
     for (const auto* pitch : validPitches)
@@ -335,16 +295,14 @@ bool AutoTracker::update(const std::vector<PitchCandidate>& currentPitches,
         }
     }
     
+    // Case 1: No points in view - global jump to best point
     if (!hasPointsInView)
     {
-        // Global jump to best point (Case 1: no points in view at all)
         if (findGlobalBest(currentPitches, targetFreq, targetConf))
         {
             outNewViewCenterFreq = targetFreq;
             targetFreq_ = targetFreq;
-            pendingTargetFreq_ = targetFreq;
             currentTargetConfidence_ = targetConf;
-            hasPendingTarget_ = true;
             isApproaching_ = false;
             return true;
         }
@@ -361,9 +319,7 @@ bool AutoTracker::update(const std::vector<PitchCandidate>& currentPitches,
             approachStartFreq_ = currentViewCenterFreq;
             approachTargetFreq_ = targetFreq;
             targetFreq_ = targetFreq;
-            pendingTargetFreq_ = targetFreq;
             currentTargetConfidence_ = targetConf;
-            hasPendingTarget_ = true;
         }
         
         // Continue approach

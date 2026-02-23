@@ -336,22 +336,31 @@ bool MLPitchDetector::inferenceSync(const float* audioData, float* outputBuffer)
     
     try
     {
-        // Normalize input audio to [-1, 1] range (matching training preprocessing)
+        // Normalize input audio: zero-mean + peak normalization to [-1, 1]
+        // This matches Python training preprocessing
         thread_local std::vector<float> normalizedAudio;
         normalizedAudio.resize(config_.inputSamples);
         
-        // Find max amplitude
+        // Step 1: Remove DC offset (make mean = 0)
+        float mean = 0.0f;
+        for (int i = 0; i < config_.inputSamples; ++i)
+        {
+            mean += audioData[i];
+        }
+        mean /= config_.inputSamples;
+        
+        // Step 2: Find max amplitude after DC removal
         float maxAmp = 0.0f;
         for (int i = 0; i < config_.inputSamples; ++i)
         {
-            maxAmp = std::max(maxAmp, std::abs(audioData[i]));
+            maxAmp = std::max(maxAmp, std::abs(audioData[i] - mean));
         }
         
-        // Normalize (avoid division by zero)
+        // Step 3: Normalize to [-1, 1] (avoid division by zero)
         float scale = (maxAmp > 1e-8f) ? (1.0f / maxAmp) : 1.0f;
         for (int i = 0; i < config_.inputSamples; ++i)
         {
-            normalizedAudio[i] = audioData[i] * scale;
+            normalizedAudio[i] = (audioData[i] - mean) * scale;
         }
         
         // Prepare input tensor [1, 1, 4096]

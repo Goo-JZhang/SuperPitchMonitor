@@ -1,19 +1,10 @@
 #!/usr/bin/env python3
 """
-实时可视化训练脚本
+调试脚本：分别显示 Noise 和 Sanity 验证集的 Loss
 
 使用方式:
-    # 默认训练 (PitchNetBaseline, TrainingData下所有数据)
-    python train_live.py
-    
-    # 指定配置文件
-    python train_live.py --config trainconfig.txt
-    
-    # 命令行参数覆盖
-    python train_live.py --epochs 100 --batch-size 64 --lr 0.0005
-    
-    # 指定数据子目录
-    python train_live.py --data SingleSanity,NoiseDataset
+    python train_debugnoise.py --config trainconfig.txt
+    python train_debugnoise.py --epochs 100 --batch-size 64 --lr 0.0005
 """
 
 import os
@@ -21,7 +12,6 @@ import sys
 import json
 import time
 import argparse
-import io
 from pathlib import Path
 from datetime import datetime
 
@@ -59,74 +49,112 @@ from loss import EnergyLoss, ConfidenceLoss, PitchDetectionLoss
 from modeloutput_utils import export_model_with_metadata, format_training_info
 
 
-class LiveTrainingPlot:
-    """实时训练图表"""
+class DebugTrainingPlot:
+    """调试训练图表 - 分别显示 Noise 和 Sanity 验证集"""
     
     def __init__(self):
         plt.ion()
-        self.fig, self.axes = plt.subplots(2, 2, figsize=(12, 8))
-        self.fig.suptitle('Training Progress - Live', fontsize=14)
+        # 2x3 布局：Train Loss | Sanity Val Loss | Noise Val Loss
+        #           Conf Loss  | Sanity Conf     | Noise Conf
+        #           Energy Loss| Sanity Energy   | Noise Energy
+        self.fig, self.axes = plt.subplots(3, 3, figsize=(15, 10))
+        self.fig.suptitle('Training Progress - Separate Validation Sets', fontsize=14)
         
-        self.ax_loss = self.axes[0, 0]
-        self.ax_conf = self.axes[0, 1]
-        self.ax_energy = self.axes[1, 0]
-        self.ax_lr = self.axes[1, 1]
+        # 第一列：训练指标
+        self.ax_train_total = self.axes[0, 0]
+        self.ax_train_conf = self.axes[1, 0]
+        self.ax_train_energy = self.axes[2, 0]
         
-        self.train_loss_line, = self.ax_loss.plot([], [], 'b-', label='Train', linewidth=2)
-        self.val_loss_line, = self.ax_loss.plot([], [], 'r-', label='Val', linewidth=2)
+        # 第二列：Sanity 验证集
+        self.ax_sanity_total = self.axes[0, 1]
+        self.ax_sanity_conf = self.axes[1, 1]
+        self.ax_sanity_energy = self.axes[2, 1]
         
-        self.train_conf_line, = self.ax_conf.plot([], [], 'b-', label='Train', linewidth=2)
-        self.val_conf_line, = self.ax_conf.plot([], [], 'r-', label='Val', linewidth=2)
+        # 第三列：Noise 验证集
+        self.ax_noise_total = self.axes[0, 2]
+        self.ax_noise_conf = self.axes[1, 2]
+        self.ax_noise_energy = self.axes[2, 2]
         
-        self.train_energy_line, = self.ax_energy.plot([], [], 'b-', label='Train', linewidth=2)
-        self.val_energy_line, = self.ax_energy.plot([], [], 'r-', label='Val', linewidth=2)
+        # 训练曲线
+        self.train_total_line, = self.ax_train_total.plot([], [], 'b-', label='Train', linewidth=2)
+        self.train_conf_line, = self.ax_train_conf.plot([], [], 'b-', label='Train', linewidth=2)
+        self.train_energy_line, = self.ax_train_energy.plot([], [], 'b-', label='Train', linewidth=2)
         
-        self.lr_line, = self.ax_lr.plot([], [], 'g-', linewidth=2)
+        # Sanity 验证曲线
+        self.sanity_total_line, = self.ax_sanity_total.plot([], [], 'g-', label='Sanity Val', linewidth=2)
+        self.sanity_conf_line, = self.ax_sanity_conf.plot([], [], 'g-', label='Sanity Val', linewidth=2)
+        self.sanity_energy_line, = self.ax_sanity_energy.plot([], [], 'g-', label='Sanity Val', linewidth=2)
         
-        for ax in [self.ax_loss, self.ax_conf, self.ax_energy]:
+        # Noise 验证曲线
+        self.noise_total_line, = self.ax_noise_total.plot([], [], 'r-', label='Noise Val', linewidth=2)
+        self.noise_conf_line, = self.ax_noise_conf.plot([], [], 'r-', label='Noise Val', linewidth=2)
+        self.noise_energy_line, = self.ax_noise_energy.plot([], [], 'r-', label='Noise Val', linewidth=2)
+        
+        # 设置标题
+        self.ax_train_total.set_title('Total Loss (Train)')
+        self.ax_train_conf.set_title('Confidence Loss (Train)')
+        self.ax_train_energy.set_title('Energy Loss (Train)')
+        
+        self.ax_sanity_total.set_title('Total Loss (Sanity Val)')
+        self.ax_sanity_conf.set_title('Confidence Loss (Sanity Val)')
+        self.ax_sanity_energy.set_title('Energy Loss (Sanity Val)')
+        
+        self.ax_noise_total.set_title('Total Loss (Noise Val)')
+        self.ax_noise_conf.set_title('Confidence Loss (Noise Val)')
+        self.ax_noise_energy.set_title('Energy Loss (Noise Val)')
+        
+        # 启用网格
+        for ax in self.axes.flat:
             ax.legend()
             ax.grid(True, alpha=0.3)
-        self.ax_lr.grid(True, alpha=0.3)
         
-        self.ax_loss.set_title('Total Loss')
-        self.ax_conf.set_title('Confidence Loss')
-        self.ax_energy.set_title('Energy Loss')
-        self.ax_lr.set_title('Learning Rate')
-        
+        # 数据存储
         self.data = {
             'epochs': [],
-            'train_total': [], 'val_total': [],
-            'train_conf': [], 'val_conf': [],
-            'train_energy': [], 'val_energy': [],
-            'lr': []
+            'train_total': [], 'train_conf': [], 'train_energy': [],
+            'sanity_total': [], 'sanity_conf': [], 'sanity_energy': [],
+            'noise_total': [], 'noise_conf': [], 'noise_energy': [],
         }
         
         plt.tight_layout()
         plt.show(block=False)
         print("Visualization window opened. If not visible, check your taskbar.")
     
-    def update(self, epoch, train_metrics, val_metrics, lr):
+    def update(self, epoch, train_metrics, sanity_metrics, noise_metrics):
         self.data['epochs'].append(epoch)
+        
+        # 训练指标
         self.data['train_total'].append(train_metrics['total'])
-        self.data['val_total'].append(val_metrics['total'])
         self.data['train_conf'].append(train_metrics['confidence'])
-        self.data['val_conf'].append(val_metrics['confidence'])
         self.data['train_energy'].append(train_metrics['energy'])
-        self.data['val_energy'].append(val_metrics['energy'])
-        self.data['lr'].append(lr)
         
-        self.train_loss_line.set_data(self.data['epochs'], self.data['train_total'])
-        self.val_loss_line.set_data(self.data['epochs'], self.data['val_total'])
+        # Sanity 验证指标
+        self.data['sanity_total'].append(sanity_metrics['total'])
+        self.data['sanity_conf'].append(sanity_metrics['confidence'])
+        self.data['sanity_energy'].append(sanity_metrics['energy'])
         
+        # Noise 验证指标
+        self.data['noise_total'].append(noise_metrics['total'])
+        self.data['noise_conf'].append(noise_metrics['confidence'])
+        self.data['noise_energy'].append(noise_metrics['energy'])
+        
+        # 更新训练曲线
+        self.train_total_line.set_data(self.data['epochs'], self.data['train_total'])
         self.train_conf_line.set_data(self.data['epochs'], self.data['train_conf'])
-        self.val_conf_line.set_data(self.data['epochs'], self.data['val_conf'])
-        
         self.train_energy_line.set_data(self.data['epochs'], self.data['train_energy'])
-        self.val_energy_line.set_data(self.data['epochs'], self.data['val_energy'])
         
-        self.lr_line.set_data(self.data['epochs'], self.data['lr'])
+        # 更新 Sanity 曲线
+        self.sanity_total_line.set_data(self.data['epochs'], self.data['sanity_total'])
+        self.sanity_conf_line.set_data(self.data['epochs'], self.data['sanity_conf'])
+        self.sanity_energy_line.set_data(self.data['epochs'], self.data['sanity_energy'])
         
-        for ax in [self.ax_loss, self.ax_conf, self.ax_energy, self.ax_lr]:
+        # 更新 Noise 曲线
+        self.noise_total_line.set_data(self.data['epochs'], self.data['noise_total'])
+        self.noise_conf_line.set_data(self.data['epochs'], self.data['noise_conf'])
+        self.noise_energy_line.set_data(self.data['epochs'], self.data['noise_energy'])
+        
+        # 自动缩放
+        for ax in self.axes.flat:
             ax.relim()
             ax.autoscale_view()
         
@@ -140,6 +168,7 @@ class LiveTrainingPlot:
 
 
 def train_epoch(model, dataloader, optimizer, device, criterion):
+    """训练一个 epoch"""
     model.train()
     metrics = {'total': 0, 'confidence': 0, 'energy': 0, 'sparsity': 0}
     count = 0
@@ -170,6 +199,7 @@ def train_epoch(model, dataloader, optimizer, device, criterion):
 
 
 def validate(model, dataloader, device, criterion):
+    """验证函数"""
     model.eval()
     metrics = {'total': 0, 'confidence': 0, 'energy': 0, 'sparsity': 0}
     count = 0
@@ -197,31 +227,16 @@ def validate(model, dataloader, device, criterion):
 
 def parse_args():
     """解析命令行参数"""
-    parser = argparse.ArgumentParser(description='Training script with live visualization')
+    parser = argparse.ArgumentParser(description='Debug training with separate validation sets')
     
-    # 配置文件
     parser.add_argument('--config', type=str, default=None,
                        help='Path to config file (.txt, .json, or .yaml)')
-    
-    # 数据配置
     parser.add_argument('--data-root', type=str, default=None,
                        help='Root directory for training data')
-    parser.add_argument('--data', type=str, default=None,
-                       help='Comma-separated list of data subdirectories (e.g., "SingleSanity,NoiseDataset")')
     parser.add_argument('--preload', action='store_true', default=None,
                        help='Preload data to memory')
     parser.add_argument('--streaming', action='store_true',
                        help='Use streaming mode (no preload)')
-    parser.add_argument('--max-memory', type=float, default=4.0,
-                       help='Max memory for auto preload decision (GB)')
-    
-    # 模型配置
-    parser.add_argument('--model', type=str, default='PitchNetBaseline',
-                       help='Model name (PitchNetBaseline)')
-    parser.add_argument('--pretrained', type=str, default=None,
-                       help='Path to pretrained weights')
-    
-    # 训练配置
     parser.add_argument('--epochs', type=int, default=50,
                        help='Number of training epochs')
     parser.add_argument('--batch-size', type=int, default=None,
@@ -255,7 +270,6 @@ def load_config_from_file(config_path: str):
             import yaml
             return yaml.safe_load(f)
         else:
-            # 简单文本格式 key=value 或 [section]
             return parse_txt_config(f.read())
 
 
@@ -317,44 +331,30 @@ def get_default_data_root():
 def main():
     args = parse_args()
     
-    # 加载配置文件（如果提供）
+    # 加载配置文件
     config = {}
     if args.config:
         print(f"Loading config from: {args.config}")
         file_config = load_config_from_file(args.config)
-        # 扁平化配置
         for section, values in file_config.items():
             if isinstance(values, dict):
                 config.update(values)
             else:
                 config[section] = values
     
-    # 命令行参数覆盖配置
     script_dir = Path(__file__).parent.resolve()
     project_root = script_dir.parent.parent.parent
     
     # 数据根目录
     data_root = args.data_root or config.get('root_dir') or str(get_default_data_root())
     
-    # 数据子目录
-    if args.data:
-        data_subdirs = [d.strip() for d in args.data.split(',')]
-    elif config.get('subdirs'):
-        data_subdirs = config.get('subdirs')
-        if isinstance(data_subdirs, str):
-            data_subdirs = [d.strip() for d in data_subdirs.split(',')]
-    else:
-        data_subdirs = None  # 自动发现所有
-    
-    # 加载方式 (Windows上mmap+ConcatDataset有问题，默认预加载)
+    # 加载方式
     if args.streaming:
         preload = False
     elif args.preload:
         preload = True
     else:
-        preload = config.get('preload', True)  # 默认True，避免Windows mmap问题
-    
-    max_memory = args.max_memory or config.get('max_memory_gb', 4.0)
+        preload = config.get('preload', True)
     
     # 训练参数
     system = platform.system()
@@ -367,10 +367,9 @@ def main():
     seed = args.seed or config.get('seed', 42)
     
     print("=" * 70)
-    print("Training Configuration")
+    print("Debug Training - Separate Validation Sets")
     print("=" * 70)
     print(f"Data root: {data_root}")
-    print(f"Data subdirs: {data_subdirs or 'Auto-discover all'}")
     print(f"Preload: {preload}")
     print(f"Epochs: {epochs}, Batch: {batch_size}, LR: {lr}")
     print(f"Val split: {val_split}")
@@ -392,37 +391,41 @@ def main():
         device = torch.device('cpu')
         print(f"\nDevice: CPU")
     
-    # 加载数据集（按类型分别加载并拆分，确保验证集包含所有类型）
+    # 加载数据集 - 分别加载 Sanity 和 Noise
     print(f"\nLoading datasets...")
-    from dataset import DatasetReader
-    from torch.utils.data import ConcatDataset
-    
-    # 发现数据子目录
     data_root_path = Path(data_root)
-    if data_subdirs:
-        data_dirs = [data_root_path / d for d in data_subdirs]
-    else:
-        data_dirs = sorted([p for p in data_root_path.iterdir() 
-                           if p.is_dir() and (p / 'meta.json').exists()])
     
-    print(f"Found {len(data_dirs)} dataset type(s):")
-    train_datasets = []
-    val_datasets = []
+    # 只加载这两个数据集
+    sanity_dir = data_root_path / 'SingleSanity'
+    noise_dir = data_root_path / 'NoiseDataset'
     
-    for data_dir in data_dirs:
-        ds = DatasetReader(str(data_dir), preload=preload, device=str(device))
-        n_val = max(1, int(len(ds) * val_split))  # 至少1个验证样本
-        n_train = len(ds) - n_val
-        
-        ds_train, ds_val = random_split(ds, [n_train, n_val])
-        train_datasets.append(ds_train)
-        val_datasets.append(ds_val)
-        
-        print(f"  {data_dir.name:20s}: {len(ds):6d} samples -> Train: {n_train:6d}, Val: {n_val:4d}")
+    if not sanity_dir.exists():
+        raise FileNotFoundError(f"SingleSanity not found: {sanity_dir}")
+    if not noise_dir.exists():
+        raise FileNotFoundError(f"NoiseDataset not found: {noise_dir}")
     
-    # 合并所有类型的训练和验证集
-    train_dataset = ConcatDataset(train_datasets)
-    val_dataset = ConcatDataset(val_datasets)
+    # 加载 Sanity
+    print("Loading SingleSanity...")
+    sanity_ds = DatasetReader(str(sanity_dir), preload=preload, device=str(device))
+    sanity_n_val = max(1, int(len(sanity_ds) * val_split))
+    sanity_n_train = len(sanity_ds) - sanity_n_val
+    sanity_train, sanity_val = random_split(sanity_ds, [sanity_n_train, sanity_n_val])
+    print(f"  SingleSanity: {len(sanity_ds):6d} samples -> Train: {sanity_n_train:6d}, Val: {sanity_n_val:4d}")
+    
+    # 加载 Noise
+    print("Loading NoiseDataset...")
+    noise_ds = DatasetReader(str(noise_dir), preload=preload, device=str(device))
+    noise_n_val = max(1, int(len(noise_ds) * val_split))
+    noise_n_train = len(noise_ds) - noise_n_val
+    noise_train, noise_val = random_split(noise_ds, [noise_n_train, noise_n_val])
+    print(f"  NoiseDataset: {len(noise_ds):6d} samples -> Train: {noise_n_train:6d}, Val: {noise_n_val:4d}")
+    
+    # 合并训练集
+    train_dataset = ConcatDataset([sanity_train, noise_train])
+    
+    # 验证集保持分开
+    sanity_val_loader = DataLoader(sanity_val, batch_size=batch_size, num_workers=0, pin_memory=False)
+    noise_val_loader = DataLoader(noise_val, batch_size=batch_size, num_workers=0, pin_memory=False)
     
     train_loader = DataLoader(
         train_dataset,
@@ -431,29 +434,12 @@ def main():
         num_workers=0,
         pin_memory=False
     )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        num_workers=0,
-        pin_memory=False
-    )
     
-    print(f"\nTrain: {len(train_dataset)}, Val: {len(val_dataset)}")
+    print(f"\nTrain: {len(train_dataset)}, Sanity Val: {len(sanity_val)}, Noise Val: {len(noise_val)}")
     
     # 模型
-    print(f"\nInitializing model: {args.model}")
-    if args.model == 'PitchNetBaseline':
-        model = PitchNetBaseline()
-    else:
-        raise ValueError(f"Unknown model: {args.model}")
-    
-    # 加载预训练权重
-    if args.pretrained or config.get('path'):
-        pretrained_path = args.pretrained or config.get('path')
-        print(f"Loading pretrained weights from: {pretrained_path}")
-        checkpoint = torch.load(pretrained_path, map_location='cpu')
-        model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
-    
+    print(f"\nInitializing model: PitchNetBaseline")
+    model = PitchNetBaseline()
     model = model.to(device)
     print(f"Parameters: {sum(p.numel() for p in model.parameters())/1e6:.2f}M")
     
@@ -477,12 +463,12 @@ def main():
             torch.cuda.synchronize()
         print("Ready!")
     
-    # 可视化 (可选，添加 --no-viz 参数可禁用)
+    # 可视化
     use_viz = not getattr(args, 'no_viz', False)
     live_plot = None
     if use_viz:
         print("\nOpening visualization window...")
-        live_plot = LiveTrainingPlot()
+        live_plot = DebugTrainingPlot()
     else:
         print("\nVisualization disabled.")
     
@@ -493,7 +479,9 @@ def main():
     
     print(f"Checkpoints: {checkpoint_dir}")
     print("\nTraining started! Press Ctrl+C to stop early.")
-    print("=" * 70)
+    print("=" * 90)
+    print(f"{'Epoch':>6} | {'Time':>5} | {'Train Loss':>10} | {'Sanity Val':>10} | {'Noise Val':>10} | {'LR':>10}")
+    print("=" * 90)
     
     best_val_loss = float('inf')
     interrupted = False
@@ -503,6 +491,7 @@ def main():
         for epoch in range(1, epochs + 1):
             start = time.time()
             
+            # 训练
             train_metrics = train_epoch(model, train_loader, optimizer, device, criterion)
             
             if device.type == 'mps':
@@ -510,7 +499,9 @@ def main():
             elif device.type == 'cuda':
                 torch.cuda.synchronize()
             
-            val_metrics = validate(model, val_loader, device, criterion)
+            # 分别验证 Sanity 和 Noise
+            sanity_metrics = validate(model, sanity_val_loader, device, criterion)
+            noise_metrics = validate(model, noise_val_loader, device, criterion)
             
             if device.type == 'mps':
                 torch.mps.synchronize()
@@ -520,22 +511,35 @@ def main():
             current_lr = optimizer.param_groups[0]['lr']
             scheduler.step()
             
+            # 更新图表
             if live_plot:
-                live_plot.update(epoch, train_metrics, val_metrics, current_lr)
+                live_plot.update(epoch, train_metrics, sanity_metrics, noise_metrics)
             
-            if val_metrics['total'] < best_val_loss:
-                best_val_loss = val_metrics['total']
+            # 保存最佳模型（基于平均验证损失）
+            avg_val_loss = (sanity_metrics['total'] + noise_metrics['total']) / 2
+            if avg_val_loss < best_val_loss:
+                best_val_loss = avg_val_loss
                 torch.save({
                     'epoch': epoch,
                     'model_state_dict': model.state_dict(),
                     'val_loss': best_val_loss,
-                }, str(checkpoint_dir / 'best_model_live.pth'))
+                }, str(checkpoint_dir / 'best_model_debug.pth'))
             
             elapsed = time.time() - start
-            print(f"Epoch {epoch:2d}/{epochs} | {elapsed:.1f}s | "
-                  f"Train: {train_metrics['total']:.4f} (c:{train_metrics['confidence']:.3f} e:{train_metrics['energy']:.3f}) | "
-                  f"Val: {val_metrics['total']:.4f} (c:{val_metrics['confidence']:.3f} e:{val_metrics['energy']:.3f}) | "
-                  f"LR: {current_lr:.6f}")
+            
+            # 打印详细结果
+            print(f"{epoch:6d} | {elapsed:5.1f}s | "
+                  f"{train_metrics['total']:10.4f} | "
+                  f"{sanity_metrics['total']:10.4f} | "
+                  f"{noise_metrics['total']:10.4f} | "
+                  f"{current_lr:10.6f}")
+            print(f"         |       | c:{train_metrics['confidence']:8.3f} | "
+                  f"c:{sanity_metrics['confidence']:8.3f} | "
+                  f"c:{noise_metrics['confidence']:8.3f} |")
+            print(f"         |       | e:{train_metrics['energy']:8.3f} | "
+                  f"e:{sanity_metrics['energy']:8.3f} | "
+                  f"e:{noise_metrics['energy']:8.3f} |")
+            print("-" * 90)
             
             # GPU内存清理
             if epoch % 10 == 0:
@@ -552,7 +556,7 @@ def main():
         current_epoch = epoch if not interrupted else epoch - 1
         
         # 保存最终模型
-        final_path = checkpoint_dir / 'final_model_live.pth'
+        final_path = checkpoint_dir / 'final_model_debug.pth'
         torch.save({
             'epoch': current_epoch,
             'model_state_dict': model.state_dict(),
@@ -560,7 +564,7 @@ def main():
         
         # 保存历史
         if live_plot:
-            with open(str(checkpoint_dir / 'history_live.json'), 'w') as f:
+            with open(str(checkpoint_dir / 'history_debug.json'), 'w') as f:
                 json.dump(live_plot.data, f)
         
         if not interrupted:
@@ -568,18 +572,15 @@ def main():
             onnx_path = None
             try:
                 print("\n[DEBUG] Starting ONNX export process...")
-                # 准备模型导出（eval模式，移到CPU）
                 model.eval()
-                print("[DEBUG] Model set to eval mode")
                 model.cpu()
-                print("[DEBUG] Model moved to CPU")
                 
                 training_info = format_training_info(
-                    config={'data_root': data_root, 'subdirs': data_subdirs, 'epochs': epochs, 'batch_size': batch_size, 'lr': lr},
+                    config={'data_root': data_root, 'subdirs': ['SingleSanity', 'NoiseDataset'], 
+                            'epochs': epochs, 'batch_size': batch_size, 'lr': lr},
                     best_val_loss=best_val_loss,
                     device=device
                 )
-                print(f"[DEBUG] Training info prepared")
                 
                 print(f"\nExporting ONNX to: {mlmodel_dir}")
                 onnx_path = export_model_with_metadata(model, str(mlmodel_dir), timestamp, training_info)
@@ -594,7 +595,7 @@ def main():
             print("\n" + "=" * 70)
             print("TRAINING COMPLETED SUCCESSFULLY!")
             print("=" * 70)
-            print(f"Best model:    {checkpoint_dir / 'best_model_live.pth'}")
+            print(f"Best model:    {checkpoint_dir / 'best_model_debug.pth'}")
             print(f"Final model:   {final_path}")
             print(f"{onnx_msg}")
             if onnx_path:
@@ -611,7 +612,7 @@ def main():
         
         # 保存图表
         if live_plot:
-            plot_path = checkpoint_dir / f'training_history_{timestamp}.png'
+            plot_path = checkpoint_dir / f'training_history_debug_{timestamp}.png'
             live_plot.fig.savefig(plot_path, dpi=150, bbox_inches='tight')
             print(f"\nTraining plot saved: {plot_path}")
             live_plot.close()

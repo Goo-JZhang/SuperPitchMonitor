@@ -1,16 +1,21 @@
 name: spm_ml
 channels:
+  - nvidia
   - defaults
-  - pytorch
 dependencies:
-  - python=3.10.19
-  - pytorch=2.5.1
+  - python=3.10
   - numpy=2.2.5
   - pip=26.0.1
   - pyyaml=6.0.3
   - tqdm=4.67.3
+  - psutil=5.9.0
   - pip:
+      - torch==2.10.0
+      - torchvision==2.10.0
+      - torchaudio==2.10.0
       - onnx==1.20.1
+      - onnxscript==0.6.2
       - onnxruntime==1.23.2
+      - PyQt5==5.15.11
       - matplotlib==3.10.8
-      - h5py==3.15.1
+

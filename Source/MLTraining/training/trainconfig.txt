@@ -1,0 +1,27 @@
+# 训练配置文件示例
+# 使用方式: python train_live.py --config trainconfig.txt
+
+# === 模型配置 ===
+[model]
+name = PitchNetBaseline
+# path = ../../../MLModel/pretrained.pth  # 可选：预训练权重路径
+
+# === 数据配置 ===
+[data]
+root_dir = ../../../TrainingData
+# subdirs = NoiseDataset
+# preload = true  
+max_memory_gb = 4.0  # 超过此内存自动使用流式加载
+
+# === 训练配置 ===
+[training]
+epochs = 50
+batch_size = 128
+lr = 0.001
+val_split = 0.02
+seed = 42
+
+# === 输出配置 ===
+[output]
+checkpoint_dir = ../../../MLModel/checkpoints
+model_dir = ../../../MLModel
