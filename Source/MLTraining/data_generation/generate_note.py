@@ -65,12 +65,15 @@ def generate_single_note(bin_idx: int,
     # 随机相位
     phase = rng.uniform(0, 2 * np.pi)
     
-    # 生成波形 - 归一化到标准差为1.0（与噪声数据一致）
+    # 生成波形 - Z-score归一化（mean=0, std=1）
     sample_rate = 44100
     t = np.arange(4096) / sample_rate
     waveform = np.sin(2 * np.pi * freq * t + phase).astype(np.float32)
-    # 正弦波 RMS = 1/sqrt(2) ≈ 0.707，归一化使标准差为1.0
-    waveform = waveform / np.std(waveform)
+    # Z-score 归一化：先减均值，再除标准差
+    waveform = waveform - np.mean(waveform)
+    std = np.std(waveform)
+    if std > 1e-8:
+        waveform = waveform / std
     
     # 生成真值
     confs = np.zeros(num_bins, dtype=np.float32)
@@ -181,8 +184,11 @@ def _generate_colored_noise(n_samples: int,
     # 反FFT得到时域信号
     noise = np.fft.irfft(fft, n=n_samples)
     
-    # 归一化到标准差为1.0（与单音数据一致）
-    noise = noise / np.std(noise)
+    # Z-score 归一化（mean=0, std=1）
+    noise = noise - np.mean(noise)
+    std = np.std(noise)
+    if std > 1e-8:
+        noise = noise / std
     
     return noise.astype(np.float32)
 
@@ -333,8 +339,11 @@ def generate_mixed_noise(colors: list,
         wave = _generate_colored_noise(4096, color, noise_rng)
         mixed_waveform += weight * wave
     
-    # 归一化波形到标准差为1.0（与单音数据一致）
-    mixed_waveform = mixed_waveform / np.std(mixed_waveform)
+    # Z-score 归一化（mean=0, std=1）
+    mixed_waveform = mixed_waveform - np.mean(mixed_waveform)
+    std = np.std(mixed_waveform)
+    if std > 1e-8:
+        mixed_waveform = mixed_waveform / std
     
     # 生成混合能量分布（平滑的理论 profile，已归一化）
     # _get_noise_energy_profile 返回的是归一化的概率分布

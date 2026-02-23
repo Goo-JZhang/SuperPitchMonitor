@@ -16,7 +16,7 @@ from generate_note import generate_single_note
 
 
 def generate_sanity_dataset(output_dir: str = '../../../TrainingData/SingleSanity',
-                            samples_per_bin: int = 10,
+                            samples_per_bin: int = 20,
                             shard_size_gb: float = 1.0,
                             num_bins: int = 2048,
                             seed: int = 42):

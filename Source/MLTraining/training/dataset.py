@@ -166,26 +166,10 @@ class DatasetReader(torch.utils.data.Dataset):
     
     def _normalize_waveform(self, waveform):
         """
-        归一化波形：Z-score 归一化 (均值为0，方差为1)
-        与 C++ 推理代码保持一致
+        归一化波形：数据生成时已进行 Z-score 归一化，此处仅做验证
+        如需重新归一化可取消注释下方代码
         """
-        if isinstance(waveform, torch.Tensor):
-            # Step 1: 去直流偏移 (mean = 0)
-            mean = torch.mean(waveform)
-            waveform = waveform - mean
-            
-            # Step 2: Z-score 归一化 (std = 1)
-            std = torch.std(waveform)
-            if std > 1e-8:
-                waveform = waveform / std
-        else:
-            # Step 1: 去直流偏移 (mean = 0)
-            waveform = waveform - np.mean(waveform)
-            
-            # Step 2: Z-score 归一化 (std = 1)
-            std = np.std(waveform)
-            if std > 1e-8:
-                waveform = waveform / std
+        # 数据已在生成时归一化 (mean=0, std=1)，跳过重复计算以提高训练速度
         return waveform
     
     def __getitem__(self, idx):

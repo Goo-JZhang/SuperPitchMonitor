@@ -22,7 +22,7 @@ from generate_note import _generate_colored_noise
 
 def generate_sanity_with_noise_dataset(
     output_dir: str = '../../../TrainingData/SanityWithNoise',
-    total_samples: int = 204800,
+    total_samples: int = 40960,
     num_bins: int = 2048,
     min_freq: float = 20.0,
     max_freq: float = 5000.0,
@@ -91,8 +91,11 @@ def generate_sanity_with_noise_dataset(
             # ===== 4. 混合波形 =====
             waveform = sine_wave + mixed_noise
             
-            # 归一化到标准差为1.0（与之前数据处理一致）
-            waveform = waveform / (np.std(waveform) + 1e-10)
+            # Z-score 归一化（mean=0, std=1）
+            waveform = waveform - np.mean(waveform)
+            std = np.std(waveform)
+            if std > 1e-8:
+                waveform = waveform / std
             
             # ===== 5. 生成真值 =====
             # Confidence：高斯平滑（只在单音位置）
