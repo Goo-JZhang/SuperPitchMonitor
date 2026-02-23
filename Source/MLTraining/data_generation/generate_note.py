@@ -189,44 +189,56 @@ def _generate_colored_noise(n_samples: int,
 
 def _get_noise_energy_profile(color: str, num_bins: int) -> np.ndarray:
     """
-    获取噪声的能量分布（频谱包络）
+    获取噪声的能量分布（概率分布形式，已归一化）
+    
+    注意：返回的是归一化的概率分布（总和为1），这样不同噪声类型可以在同一尺度上混合
     
     Args:
         color: 噪声类型
         num_bins: bin数量
     
     Returns:
-        [num_bins] 能量分布（未归一化）
+        [num_bins] 归一化的能量分布（概率分布，总和为1）
     """
-    # 计算每个bin的中心频率（对数刻度）
+    # 计算每个bin的边界频率（对数刻度）
     min_freq = 20.0
     max_freq = 5000.0
     log_min = np.log2(min_freq)
     log_max = np.log2(max_freq)
     
-    bin_centers = np.array([
-        2 ** (log_min + (i / (num_bins - 1)) * (log_max - log_min))
-        for i in range(num_bins)
+    # bin 边界（共 num_bins+1 个边界）
+    bin_edges = np.array([
+        2 ** (log_min + (i / num_bins) * (log_max - log_min))
+        for i in range(num_bins + 1)
     ])
     
-    # 根据噪声类型计算能量分布
+    # 每个 bin 的宽度（delta_f）
+    delta_f = bin_edges[1:] - bin_edges[:-1]
+    
+    # bin 中心频率
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    
+    # 根据噪声类型计算功率谱密度
     if color == 'white':
-        # 白噪声：平坦频谱
-        energies = np.ones(num_bins)
+        psd = np.ones(num_bins)
     elif color == 'pink':
-        # 粉红噪声：1/f
-        energies = 1 / bin_centers
+        psd = 1 / bin_centers
     elif color == 'brown':
-        # 布朗噪声：1/f²
-        energies = 1 / (bin_centers ** 2)
+        psd = 1 / (bin_centers ** 2)
     elif color == 'blue':
-        # 蓝噪声：f
-        energies = bin_centers
+        psd = bin_centers
     elif color == 'violet':
-        # 紫噪声：f²
-        energies = bin_centers ** 2
+        psd = bin_centers ** 2
     else:
         raise ValueError(f"Unknown noise color: {color}")
+    
+    # 每个bin的能量 = PSD × delta_f
+    energies = psd * delta_f
+    
+    # 归一化为概率分布（总和为1），确保不同噪声类型在同一尺度上
+    energy_sum = energies.sum()
+    if energy_sum > 0:
+        energies = energies / energy_sum
     
     return energies
 
@@ -286,6 +298,9 @@ def generate_mixed_noise(colors: list,
     """
     生成混合噪声（多种颜色噪声的加权组合）
     
+    注意：每种噪声使用独立的随机种子，确保它们在频域上不相关，
+    这样混合后的能量才是各能量按 weight^2 的叠加
+    
     Args:
         colors: 噪声颜色列表，如 ['white', 'pink']
         num_bins: 总bin数
@@ -310,21 +325,26 @@ def generate_mixed_noise(colors: list,
     weights = weights / weights.sum()  # 归一化
     
     # 生成各噪声的波形并混合
+    # 重要：每种噪声使用独立的 RNG，确保它们在频域上不相关
     mixed_waveform = np.zeros(4096, dtype=np.float32)
     for color, weight in zip(colors, weights):
-        wave = _generate_colored_noise(4096, color, rng)
+        # 为每种噪声创建独立的 RNG
+        noise_rng = np.random.RandomState(rng.randint(0, 2**31))
+        wave = _generate_colored_noise(4096, color, noise_rng)
         mixed_waveform += weight * wave
     
     # 归一化波形到标准差为1.0（与单音数据一致）
     mixed_waveform = mixed_waveform / np.std(mixed_waveform)
     
-    # 生成混合能量分布（各噪声能量分布的加权组合）
+    # 生成混合能量分布（平滑的理论 profile，已归一化）
+    # _get_noise_energy_profile 返回的是归一化的概率分布
+    # 混合：按 weight^2 加权（能量是平方关系）
     energies = np.zeros(num_bins, dtype=np.float32)
     for color, weight in zip(colors, weights):
-        energy = _get_noise_energy_profile(color, num_bins)
-        energies += weight * energy
+        energy = _get_noise_energy_profile(color, num_bins)  # 已归一化
+        energies += (weight ** 2) * energy
     
-    # 归一化能量
+    # 再次归一化
     energy_sum = energies.sum()
     if energy_sum > 0:
         energies = energies / energy_sum
