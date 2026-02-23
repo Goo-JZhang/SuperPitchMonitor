@@ -171,11 +171,11 @@ class DataVisualizer:
             return False
     
     def _preprocess_waveform(self, waveform):
-        """预处理波形 - 与 C++ 推理代码保持一致"""
+        """预处理波形 - Z-score 归一化，与 C++ 推理代码保持一致"""
         waveform = waveform - np.mean(waveform)
-        max_amp = np.max(np.abs(waveform))
-        if max_amp > 1e-8:
-            waveform = waveform / max_amp
+        std = np.std(waveform)
+        if std > 1e-8:
+            waveform = waveform / std
         return waveform
     
     def _run_inference(self, waveform):
@@ -506,7 +506,7 @@ class DataVisualizer:
         self.ax_wave_proc.plot(t, waveform_proc, 'g-', linewidth=0.5)
         self.ax_wave_proc.set_xlabel('Time (ms)')
         self.ax_wave_proc.set_ylabel('Amplitude')
-        self.ax_wave_proc.set_title('Preprocessed Waveform (mean=0, peak=1)')
+        self.ax_wave_proc.set_title('Preprocessed Waveform (mean=0, std=1)')
         self.ax_wave_proc.grid(True, alpha=0.3)
         self.ax_wave_proc.set_ylim(-1.2, 1.2)
         

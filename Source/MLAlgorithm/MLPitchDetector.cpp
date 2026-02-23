@@ -336,7 +336,7 @@ bool MLPitchDetector::inferenceSync(const float* audioData, float* outputBuffer)
     
     try
     {
-        // Normalize input audio: zero-mean + peak normalization to [-1, 1]
+        // Normalize input audio: Z-score normalization (mean=0, std=1)
         // This matches Python training preprocessing
         thread_local std::vector<float> normalizedAudio;
         normalizedAudio.resize(config_.inputSamples);
@@ -349,15 +349,18 @@ bool MLPitchDetector::inferenceSync(const float* audioData, float* outputBuffer)
         }
         mean /= config_.inputSamples;
         
-        // Step 2: Find max amplitude after DC removal
-        float maxAmp = 0.0f;
+        // Step 2: Calculate standard deviation
+        float variance = 0.0f;
         for (int i = 0; i < config_.inputSamples; ++i)
         {
-            maxAmp = std::max(maxAmp, std::abs(audioData[i] - mean));
+            float diff = audioData[i] - mean;
+            variance += diff * diff;
         }
+        variance /= config_.inputSamples;
+        float std = std::sqrt(variance);
         
-        // Step 3: Normalize to [-1, 1] (avoid division by zero)
-        float scale = (maxAmp > 1e-8f) ? (1.0f / maxAmp) : 1.0f;
+        // Step 3: Z-score normalization (avoid division by zero)
+        float scale = (std > 1e-8f) ? (1.0f / std) : 1.0f;
         for (int i = 0; i < config_.inputSamples; ++i)
         {
             normalizedAudio[i] = (audioData[i] - mean) * scale;
