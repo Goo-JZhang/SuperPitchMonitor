@@ -450,7 +450,7 @@ def main():
         conf_weight=1.0,
         energy_weight=0.3,
         sparsity_weight=0.01,
-        energy_loss_type='js'
+        energy_loss_type='kl'
     ).to(device)
     
     # GPU预热

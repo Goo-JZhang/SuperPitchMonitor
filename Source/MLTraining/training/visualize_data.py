@@ -225,36 +225,34 @@ class DataVisualizer:
             for i in range(2049)
         ])
         
-        # 使用插值将 PSD 映射到对数频率点，然后积分
-        # 首先在对数频率轴上创建插值点
-        log_freqs = np.log2(np.clip(freqs, min_freq, max_freq))
-        log_bin_centers = np.array([
-            log_min + (i + 0.5) / 2048 * (log_max - log_min)
-            for i in range(2048)
-        ])
-        
-        # 插值 PSD 到对数频率轴（避免线性FFT点在对数bin中分布不均的问题）
-        from scipy import interpolate
-        # 只使用有效的频率点（排除0频率）
-        valid_mask = freqs > 0
-        psd_interp = interpolate.interp1d(
-            log_freqs[valid_mask], 
-            power[valid_mask],
-            kind='linear',
-            bounds_error=False,
-            fill_value='extrapolate'
-        )
-        
-        # 计算每个bin的能量 = 插值PSD × delta_f
+        # 计算每个bin的能量 = PSD × delta_f（积分）
         bin_energy = np.zeros(2048)
         for i in range(2048):
             f_low, f_high = bin_edges[i], bin_edges[i+1]
             delta_f = f_high - f_low
-            log_center = log_bin_centers[i]
             
-            # 插值获取该bin中心的PSD
-            psd_center = psd_interp(log_center)
-            bin_energy[i] = psd_center * delta_f
+            # 找到该bin内的所有FFT点
+            mask = (freqs >= f_low) & (freqs < f_high)
+            if mask.any():
+                # bin能量 = 平均PSD × delta_f
+                bin_energy[i] = np.mean(power[mask]) * delta_f
+            else:
+                # 使用 numpy 插值
+                f_center = (f_low + f_high) / 2
+                idx = np.searchsorted(freqs, f_center)
+                if idx >= len(power):
+                    idx = len(power) - 1
+                if idx == 0:
+                    idx = 1
+                # 线性插值
+                f0, f1 = freqs[idx-1], freqs[idx]
+                p0, p1 = power[idx-1], power[idx]
+                if f1 > f0:
+                    t = (f_center - f0) / (f1 - f0)
+                    psd_center = p0 * (1-t) + p1 * t
+                else:
+                    psd_center = power[idx]
+                bin_energy[i] = psd_center * delta_f
         
         # 归一化为概率分布
         energy_sum = bin_energy.sum()
@@ -445,6 +443,32 @@ class DataVisualizer:
         e = e / e.sum()
         return -np.sum(e * np.log(e + 1e-10))
     
+    def _calc_kl_divergence(self, p, q):
+        """
+        计算 KL 散度 D_KL(P || Q)
+        训练使用的是 KL 散度损失
+        """
+        # 确保概率分布非零
+        p = np.clip(p, 1e-10, 1.0)
+        q = np.clip(q, 1e-10, 1.0)
+        # 归一化
+        p = p / p.sum()
+        q = q / q.sum()
+        # KL(P || Q) = sum(p * log(p/q))
+        return np.sum(p * np.log(p / q))
+    
+    def _calc_bce_loss(self, y_true, y_pred):
+        """
+        计算二元交叉熵损失 BCE
+        训练时 confidence 使用 BCE 损失
+        """
+        epsilon = 1e-7
+        # 裁剪避免 log(0)
+        y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
+        y_true = np.clip(y_true, epsilon, 1 - epsilon)
+        # BCE = -[y*log(p) + (1-y)*log(1-p)]
+        return -np.mean(y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred))
+    
     def _display_sample(self, idx):
         """显示样本 - 3x3 布局"""
         if not hasattr(self, 'waveforms'):
@@ -508,7 +532,12 @@ class DataVisualizer:
                                 label=f'Peak@{peak_idx} ({true_conf[peak_idx]:.3f})')
             self.ax_conf_gt.legend(fontsize=8)
         self.ax_conf_gt.set_ylabel('Confidence')
-        self.ax_conf_gt.set_title(f'GT Conf - {(true_conf > 0).sum()} nz, max={true_conf.max():.3f}')
+        nz_count = (true_conf > 0).sum()
+        if pred_conf is not None:
+            bce_loss = self._calc_bce_loss(true_conf, pred_conf)
+            self.ax_conf_gt.set_title(f'GT Conf - {nz_count} nz, max={true_conf.max():.3f}, BCE={bce_loss:.4f}')
+        else:
+            self.ax_conf_gt.set_title(f'GT Conf - {nz_count} nz, max={true_conf.max():.3f}')
         self.ax_conf_gt.set_xlim(0, len(true_conf))
         self.ax_conf_gt.set_ylim(0, 1.1)
         self.ax_conf_gt.grid(True, alpha=0.3)
@@ -521,7 +550,9 @@ class DataVisualizer:
                 self.ax_conf_pred.plot(peak_idx, pred_conf[peak_idx], 'r*', markersize=10,
                                       label=f'Peak@{peak_idx} ({pred_conf[peak_idx]:.3f})')
                 self.ax_conf_pred.legend(fontsize=8)
-            self.ax_conf_pred.set_title(f'Pred Conf - {(pred_conf > 0.5).sum()} > 0.5, max={pred_conf.max():.3f}')
+            gt_05_count = (pred_conf > 0.5).sum()
+            bce_loss = self._calc_bce_loss(pred_conf, true_conf)
+            self.ax_conf_pred.set_title(f'Pred Conf - {gt_05_count} > 0.5, max={pred_conf.max():.3f}, BCE={bce_loss:.4f}')
         else:
             self.ax_conf_pred.text(0.5, 0.5, 'No model', ha='center', va='center', fontsize=10)
             self.ax_conf_pred.set_title('Pred Conf')
@@ -559,7 +590,12 @@ class DataVisualizer:
         self.ax_energy_gt.plot(peak_e_idx, true_energy[peak_e_idx], 'r*', markersize=10,
                               label=f'Peak@{peak_e_idx} ({true_energy[peak_e_idx]:.4f})')
         self.ax_energy_gt.set_ylabel('Energy')
-        self.ax_energy_gt.set_title(f'GT Energy - H={self._calc_entropy(true_energy):.3f}')
+        gt_entropy = self._calc_entropy(true_energy)
+        if pred_energy is not None:
+            gt_kl = self._calc_kl_divergence(true_energy, pred_energy)
+            self.ax_energy_gt.set_title(f'GT Energy - H={gt_entropy:.3f}, KL(gt||pred)={gt_kl:.4f}')
+        else:
+            self.ax_energy_gt.set_title(f'GT Energy - H={gt_entropy:.3f}')
         self.ax_energy_gt.set_xlim(0, len(true_energy))
         self.ax_energy_gt.grid(True, alpha=0.3)
         self.ax_energy_gt.legend(fontsize=8)
@@ -570,7 +606,9 @@ class DataVisualizer:
             peak_p_idx = np.argmax(pred_energy)
             self.ax_energy_pred.plot(peak_p_idx, pred_energy[peak_p_idx], 'r*', markersize=10,
                                     label=f'Peak@{peak_p_idx} ({pred_energy[peak_p_idx]:.4f})')
-            self.ax_energy_pred.set_title(f'Pred Energy - H={self._calc_entropy(pred_energy):.3f}')
+            pred_entropy = self._calc_entropy(pred_energy)
+            pred_kl = self._calc_kl_divergence(pred_energy, true_energy)
+            self.ax_energy_pred.set_title(f'Pred Energy - H={pred_entropy:.3f}, KL(pred||gt)={pred_kl:.4f}')
             self.ax_energy_pred.legend(fontsize=8)
         else:
             self.ax_energy_pred.text(0.5, 0.5, 'No model', ha='center', va='center', fontsize=10)
@@ -592,7 +630,11 @@ class DataVisualizer:
             self.ax_energy_err.axhline(y=0, color='k', linestyle='--', linewidth=0.8)
             self.ax_energy_err.set_xlabel('Bin')
             self.ax_energy_err.set_ylabel('Error (GT - Pred)')
-            self.ax_energy_err.set_title(f'Energy Error - μ={energy_err.mean():.4f}, σ={energy_err.std():.4f}')
+            # 计算 JS 散度（对称的，更能代表整体差异）
+            m = (true_energy + pred_energy) / 2
+            js_div = (self._calc_kl_divergence(true_energy, m) + 
+                     self._calc_kl_divergence(pred_energy, m)) / 2
+            self.ax_energy_err.set_title(f'Energy Error - JS={js_div:.4f}, μ={energy_err.mean():.4f}')
             self.ax_energy_err.legend(fontsize=8)
         else:
             self.ax_energy_err.text(0.5, 0.5, 'Load model to see error', ha='center', va='center', fontsize=9)
