@@ -579,15 +579,10 @@ void SpectrumDisplay::drawMLSpectrum(juce::Graphics& g)
         juce::Path energyPath;
         firstPoint = true;
         
-        // Find max energy for normalization (only within valid ML range)
-        float maxEnergy = 0.001f;
-        for (int i = 0; i < numBins && i < (int)currentData_.mlEnergy.size(); ++i)
-        {
-            if (i >= (int)currentData_.frequencies.size()) continue;
-            float freq = currentData_.frequencies[i];
-            if (freq >= mlMinFreq && freq <= mlMaxFreq)
-                maxEnergy = juce::jmax(maxEnergy, currentData_.mlEnergy[i]);
-        }
+        // ML Energy is already softmax-normalized (sum=1), display raw values
+        // Uniform distribution across 2048 bins: ~0.0005 (will appear as a low line)
+        // Single peak can be close to 1.0 (will fill the display)
+        // This is the true probability distribution
         
         for (int i = 0; i < numBins && i < (int)currentData_.mlEnergy.size(); ++i)
         {
@@ -597,14 +592,15 @@ void SpectrumDisplay::drawMLSpectrum(juce::Graphics& g)
             if (freq < minFreq_ || freq > maxFreq_) continue;
             
             // For ML mode: values outside 20-5000Hz are invalid and should be 0
-            float normalizedEnergy = 0.0f;
+            float energy = 0.0f;
             if (freq >= mlMinFreq && freq <= mlMaxFreq)
             {
-                normalizedEnergy = currentData_.mlEnergy[i] / maxEnergy;
+                // Use raw softmax output (already in [0,1] range)
+                energy = currentData_.mlEnergy[i];
             }
             
             float x = freqToX(freq);
-            float y = plotArea.getBottom() - normalizedEnergy * effectiveHeight * 0.7f;
+            float y = plotArea.getBottom() - energy * effectiveHeight;
             y = juce::jlimit((float)plotArea.getY() + topPadding, (float)plotArea.getBottom(), y);
             
             if (firstPoint)

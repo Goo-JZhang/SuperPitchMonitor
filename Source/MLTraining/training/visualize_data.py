@@ -508,7 +508,7 @@ class DataVisualizer:
         self.ax_wave_proc.set_ylabel('Amplitude')
         self.ax_wave_proc.set_title('Preprocessed Waveform (mean=0, std=1)')
         self.ax_wave_proc.grid(True, alpha=0.3)
-        self.ax_wave_proc.set_ylim(-1.2, 1.2)
+        self.ax_wave_proc.set_ylim(waveform_proc.min(), waveform_proc.max())
         
         # (1,3) FFT频谱（映射到2048 bins，与conf/energy对齐）
         try:

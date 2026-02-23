@@ -359,8 +359,23 @@ bool MLPitchDetector::inferenceSync(const float* audioData, float* outputBuffer)
         variance /= config_.inputSamples;
         float std = std::sqrt(variance);
         
-        // Step 3: Z-score normalization (avoid division by zero)
-        float scale = (std > 1e-8f) ? (1.0f / std) : 1.0f;
+        // Step 3: Check for silence (very low std)
+        // If silence, skip inference and return zero confidence + uniform energy
+        if (std < 1e-6f)
+        {
+            const int numBins = config_.numFreqBins;
+            float uniformEnergy = 1.0f / numBins;
+            for (int i = 0; i < numBins; ++i)
+            {
+                outputBuffer[i * 2] = 0.0f;        // confidence = 0
+                outputBuffer[i * 2 + 1] = uniformEnergy;  // uniform energy
+            }
+            lastInferenceTimeMs_ = 0.0;  // No inference performed
+            return true;
+        }
+        
+        // Step 4: Z-score normalization
+        float scale = 1.0f / std;
         for (int i = 0; i < config_.inputSamples; ++i)
         {
             normalizedAudio[i] = (audioData[i] - mean) * scale;
@@ -433,6 +448,7 @@ void MLPitchDetector::inferenceThreadFunc()
         // Run inference
         if (inferenceSync(chunk.data.data(), outputBuffer.data()))
         {
+            // Note: Model output already includes softmax on energy channel
             // Post-process for high-confidence detections
             auto detections = postProcess(outputBuffer.data());
             

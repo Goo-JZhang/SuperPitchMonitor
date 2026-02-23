@@ -97,6 +97,12 @@ class DatasetWriter:
         confs = np.asarray(confs, dtype=self.confs_dtype)
         energies = np.asarray(energies, dtype=self.energies_dtype)
         
+        # 保险起见：确保 waveform 是 Z-score 归一化 (mean=0, std=1)
+        waveform = waveform - np.mean(waveform)
+        std = np.std(waveform)
+        if std > 1e-8:
+            waveform = waveform / std
+        
         self.waveforms.append(waveform)
         self.confs_list.append(confs)
         self.energies_list.append(energies)
