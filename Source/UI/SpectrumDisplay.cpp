@@ -648,19 +648,21 @@ void SpectrumDisplay::drawModeLabel(juce::Graphics& g)
     // Determine mode: use preview state if no data yet
     bool hasData = !currentData_.magnitudes.empty() || !currentData_.mlConfidence.empty();
     bool isMLMode = currentData_.isMLMode || (!hasData && mlPreviewEnabled_);
-    bool isFFTMode = currentData_.isFFTMode || (!hasData && !mlPreviewEnabled_);
+    // FFT and Nonlinear Fourier are both "Classical Mode" (traditional signal processing)
+    bool isClassicalMode = currentData_.isFFTMode || currentData_.isNonlinearFourierMode || 
+                           (!hasData && !mlPreviewEnabled_);
     
     if (isMLMode)
     {
         label = "ML MODE";
         color = juce::Colours::lime;
-        subtext = hasData ? "Base frequency distribution only" : "Ready (ML enabled)";
+        subtext = hasData ? "Neural network inference" : "Ready (ML enabled)";
     }
-    else if (isFFTMode)
+    else if (isClassicalMode)
     {
-        label = "FFT MODE";
+        label = "CLASSICAL MODE";
         color = juce::Colours::cyan;
-        subtext = hasData ? "Traditional FFT spectrum" : "Ready (FFT Analysis)";
+        subtext = hasData ? "Traditional signal processing" : "Ready (Classical Analysis)";
     }
     else
     {

@@ -28,6 +28,16 @@ struct SpectrumData {
     std::vector<float> mlEnergy;        // ML energy for each bin
     bool isMLMode = false;              // Whether this data is from ML model
     bool isFFTMode = false;             // Whether this data is from FFT analysis
+    bool isNonlinearFourierMode = false; // Whether this data is from Nonlinear Fourier analysis
+    
+    // Analysis method used to generate this data
+    enum class AnalysisMethod {
+        Unknown = 0,
+        FFT = 1,                // Standard FFT with linear bins
+        NonlinearFourier = 2,   // Log-spaced DFT (matches ML output format)
+        MLModel = 3             // Neural network inference
+    };
+    AnalysisMethod analysisMethod = AnalysisMethod::Unknown;
 };
 
 /**

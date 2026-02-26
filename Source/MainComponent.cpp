@@ -225,6 +225,21 @@ void MainComponent::connectSettingsCallbacks()
             audioEngine_->setMLModelPath(modelPath);
         }
     });
+    
+    // Non-ML Analysis method selection
+    content->onAnalysisMethodChanged([this](int method) {
+        auto analysisMethod = (method == 0) 
+            ? Config::TraditionalAnalysisMethod::FFT 
+            : Config::TraditionalAnalysisMethod::NonlinearFourier;
+        
+        if (audioEngine_)
+        {
+            audioEngine_->setAnalysisMethod(analysisMethod);
+        }
+        
+        juce::String methodName = (method == 0) ? "Standard FFT" : "Nonlinear Fourier";
+        SPM_LOG_INFO("[Settings] Analysis method: " + methodName);
+    });
 }
 
 void MainComponent::setupAudio()

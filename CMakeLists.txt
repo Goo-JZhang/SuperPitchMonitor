@@ -92,6 +92,8 @@ target_sources(SuperPitchMonitor PRIVATE
     Source/Audio/SpectrumData.h
     Source/Audio/SpectrumAnalyzer.cpp
     Source/Audio/SpectrumAnalyzer.h
+    Source/Audio/NonlinearFourierAnalyzer.cpp
+    Source/Audio/NonlinearFourierAnalyzer.h
     Source/Audio/PolyphonicDetector.cpp
     Source/Audio/PolyphonicDetector.h
     Source/Audio/MultiResolutionAnalyzer.cpp

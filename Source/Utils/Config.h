@@ -50,23 +50,42 @@ namespace Spectrum {
     inline constexpr int DefaultHopSize = 512;        // 87.5% overlap @ 4096
     inline constexpr float OverlapRatio = 0.875f;
     
-    // Display range
+    // Fixed frequency range for all analysis (20-5000 Hz)
+    // This range covers most instrument fundamentals and voice
     inline constexpr float MinFrequency = 20.0f;
-    inline constexpr float MaxFrequency = 8000.0f;
-    inline constexpr float MinDecibels = -80.0f;
-    inline constexpr float MaxDecibels = 0.0f;
+    inline constexpr float MaxFrequency = 5000.0f;
+    
+    // Fixed display range for spectrum visualization (dB)
+    inline constexpr float MinDecibels = -90.0f;
+    inline constexpr float MaxDecibels = -10.0f;
+    
+    // Nonlinear Fourier analysis configuration
+    // Matches ML model output: 2048 logarithmically-spaced bins
+    inline constexpr int NonlinearFourierBins = 2048;
+    inline constexpr int NonlinearFourierWindowSize = 4096;
+    inline constexpr float NonlinearFourierMinFreq = 20.0f;
+    inline constexpr float NonlinearFourierMaxFreq = 5000.0f;
     
     // Display bands
     inline constexpr int NumDisplayBands = 128;
 }
 
 // =============================================================================
+// Non-ML Spectrum Analysis Method
+// =============================================================================
+enum class TraditionalAnalysisMethod {
+    FFT,                // Standard FFT with linear frequency bins
+    NonlinearFourier    // Log-spaced frequency bins via direct DFT (matches ML output format)
+};
+
+// =============================================================================
 // Pitch Detection Settings
 // =============================================================================
 namespace Pitch {
-    // Detection range (Hz) - Fundamental frequency range (not including harmonics)
+    // Fixed detection range (Hz) - Fundamental frequency range (not including harmonics)
+    // Range: 20-5000 Hz (E0 to B7, covers most instrument fundamentals and voice)
     inline constexpr float MinFrequency = 20.0f;   // ~20 Hz (E0, below piano A0)
-    inline constexpr float MaxFrequency = 5000.0f; // ~5 kHz (covers most instrument fundamentals)
+    inline constexpr float MaxFrequency = 5000.0f; // ~5 kHz (B7, covers most instrument fundamentals)
     
     // MIDI conversion range (corresponding to 20-5000 Hz)
     inline constexpr float MinMidiNote = 16.0f;   // ~20 Hz (E0)

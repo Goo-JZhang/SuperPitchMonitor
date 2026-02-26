@@ -177,59 +177,22 @@ void SettingsContent::setupComponents()
     timeWindowValueLabel_.setColour(juce::Label::textColourId, juce::Colours::cyan);
     addAndMakeVisible(timeWindowValueLabel_);
     
-    // ===== Spectrum Section =====
-    spectrumLabel_.setText("Spectrum", juce::dontSendNotification);
-    spectrumLabel_.setFont(16.0f);
-    spectrumLabel_.setColour(juce::Label::textColourId, juce::Colours::cyan);
-    addAndMakeVisible(spectrumLabel_);
-    
-    dbMinSlider_.setRange(-120.0, -40.0, 1.0);
-    dbMinSlider_.setValue(-90.0);
-    dbMinSlider_.setSliderStyle(juce::Slider::LinearHorizontal);
-    dbMinSlider_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 24);
-    dbMinSlider_.addListener(this);
-    addAndMakeVisible(dbMinSlider_);
-    
-    dbMinLabel_.setText("Min dB:", juce::dontSendNotification);
-    dbMinLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
-    addAndMakeVisible(dbMinLabel_);
-    
-    dbMaxSlider_.setRange(-60.0, 0.0, 1.0);
-    dbMaxSlider_.setValue(-10.0);
-    dbMaxSlider_.setSliderStyle(juce::Slider::LinearHorizontal);
-    dbMaxSlider_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 24);
-    dbMaxSlider_.addListener(this);
-    addAndMakeVisible(dbMaxSlider_);
-    
-    dbMaxLabel_.setText("Max dB:", juce::dontSendNotification);
-    dbMaxLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
-    addAndMakeVisible(dbMaxLabel_);
-    
     // ===== Pitch Detection Section =====
-    pitchLabel_.setText("Pitch Detection", juce::dontSendNotification);
+    pitchLabel_.setText("Pitch Detection (20-5000 Hz)", juce::dontSendNotification);
     pitchLabel_.setFont(16.0f);
     pitchLabel_.setColour(juce::Label::textColourId, juce::Colours::cyan);
     addAndMakeVisible(pitchLabel_);
     
-    minFreqSlider_.setRange(20, 500, 1);
-    minFreqSlider_.setValue(Config::Pitch::MinFrequency);
-    minFreqSlider_.setSliderStyle(juce::Slider::LinearHorizontal);
-    minFreqSlider_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 60, 24);
-    addAndMakeVisible(minFreqSlider_);
+    // Analysis method selection (shown when ML is disabled)
+    analysisMethodLabel_.setText("Non-ML Method:", juce::dontSendNotification);
+    analysisMethodLabel_.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible(analysisMethodLabel_);
     
-    minFreqLabel_.setText("Min Freq:", juce::dontSendNotification);
-    minFreqLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
-    addAndMakeVisible(minFreqLabel_);
-    
-    maxFreqSlider_.setRange(1000, 8000, 10);
-    maxFreqSlider_.setValue(Config::Pitch::MaxFrequency);
-    maxFreqSlider_.setSliderStyle(juce::Slider::LinearHorizontal);
-    maxFreqSlider_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 60, 24);
-    addAndMakeVisible(maxFreqSlider_);
-    
-    maxFreqLabel_.setText("Max Freq:", juce::dontSendNotification);
-    maxFreqLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
-    addAndMakeVisible(maxFreqLabel_);
+    analysisMethodCombo_.addItem("Standard FFT", 1);
+    analysisMethodCombo_.addItem("Nonlinear Fourier (Log-spaced, 2048 bins)", 2);
+    analysisMethodCombo_.setSelectedId(2, juce::dontSendNotification);  // Default to Nonlinear Fourier
+    analysisMethodCombo_.addListener(this);
+    addAndMakeVisible(analysisMethodCombo_);
     
     mlAnalyzeButton_.setButtonText("ML Analysis (GPU Neural Network)");
     mlAnalyzeButton_.setToggleState(true, juce::dontSendNotification);  // Default ON
@@ -321,11 +284,9 @@ void SettingsContent::loadSettings()
     timeWindowSlider_.setValue(timeWindow, juce::dontSendNotification);
     timeWindowValueLabel_.setText(juce::String(timeWindow, 1) + " s", juce::dontSendNotification);
     
-    float dbMin = (float)props->getDoubleValue("dbMin", -90.0);
-    dbMinSlider_.setValue(dbMin, juce::dontSendNotification);
-    
-    float dbMax = (float)props->getDoubleValue("dbMax", -10.0);
-    dbMaxSlider_.setValue(dbMax, juce::dontSendNotification);
+    // Load analysis method (default to Nonlinear Fourier = 2)
+    int analysisMethod = props->getIntValue("analysisMethod", 2);
+    analysisMethodCombo_.setSelectedId(analysisMethod, juce::dontSendNotification);
     
     // Load buffer size
     int bufferSize = props->getIntValue("bufferSize", 512);
@@ -359,8 +320,7 @@ void SettingsContent::saveSettings()
     props->setValue("logScale", logScaleButton_.getToggleState());
     props->setValue("showNotes", showNotesButton_.getToggleState());
     props->setValue("timeWindow", timeWindowSlider_.getValue());
-    props->setValue("dbMin", dbMinSlider_.getValue());
-    props->setValue("dbMax", dbMaxSlider_.getValue());
+    props->setValue("analysisMethod", analysisMethodCombo_.getSelectedId());
     props->setValue("bufferSize", getBufferSize());
     
     appProps.saveIfNeeded();
@@ -539,32 +499,14 @@ void SettingsContent::resized()
     timeWindowSlider_.setBounds(timeRow.reduced(5, 0));
     y += 50;
     
-    // Spectrum Section
-    spectrumLabel_.setBounds(margin, y, 200, 25);
-    y += 30;
-    
-    auto dbMinRow = juce::Rectangle<int>(margin, y, contentWidth - 2*margin, 30);
-    dbMinLabel_.setBounds(dbMinRow.removeFromLeft(70));
-    dbMinSlider_.setBounds(dbMinRow.reduced(5, 0));
-    y += 40;
-    
-    auto dbMaxRow = juce::Rectangle<int>(margin, y, contentWidth - 2*margin, 30);
-    dbMaxLabel_.setBounds(dbMaxRow.removeFromLeft(70));
-    dbMaxSlider_.setBounds(dbMaxRow.reduced(5, 0));
-    y += 50;
-    
     // Pitch Detection Section
-    pitchLabel_.setBounds(margin, y, 200, 25);
+    pitchLabel_.setBounds(margin, y, 250, 25);
     y += 30;
     
-    auto minFreqRow = juce::Rectangle<int>(margin, y, contentWidth - 2*margin, 30);
-    minFreqLabel_.setBounds(minFreqRow.removeFromLeft(80));
-    minFreqSlider_.setBounds(minFreqRow.reduced(5, 0));
-    y += 40;
-    
-    auto maxFreqRow = juce::Rectangle<int>(margin, y, contentWidth - 2*margin, 30);
-    maxFreqLabel_.setBounds(maxFreqRow.removeFromLeft(80));
-    maxFreqSlider_.setBounds(maxFreqRow.reduced(5, 0));
+    // Analysis method selection row
+    auto methodRow = juce::Rectangle<int>(margin, y, contentWidth - 2*margin, 30);
+    analysisMethodLabel_.setBounds(methodRow.removeFromLeft(110));
+    analysisMethodCombo_.setBounds(methodRow);
     y += 40;
     
     mlAnalyzeButton_.setBounds(margin, y, 350, 30);
@@ -653,21 +595,20 @@ void SettingsContent::sliderValueChanged(juce::Slider* slider)
         if (timeWindowCallback_)
             timeWindowCallback_(timeWindow);
     }
-    else if (slider == &dbMinSlider_)
-    {
-        if (dbMinSlider_.getValue() >= dbMaxSlider_.getValue())
-            dbMinSlider_.setValue(dbMaxSlider_.getValue() - 5, juce::dontSendNotification);
-    }
-    else if (slider == &dbMaxSlider_)
-    {
-        if (dbMaxSlider_.getValue() <= dbMinSlider_.getValue())
-            dbMaxSlider_.setValue(dbMinSlider_.getValue() + 5, juce::dontSendNotification);
-    }
 }
 
 void SettingsContent::comboBoxChanged(juce::ComboBox* comboBox)
 {
-    if (comboBox == &mlModelCombo_)
+    if (comboBox == &analysisMethodCombo_)
+    {
+        int methodId = analysisMethodCombo_.getSelectedId();
+        juce::String methodName = (methodId == 1) ? "Standard FFT" : "Nonlinear Fourier";
+        SPM_LOG_INFO("[Settings] Analysis method changed to: " + methodName);
+        
+        if (analysisMethodCallback_)
+            analysisMethodCallback_(methodId - 1);  // Convert to 0-indexed: 0=FFT, 1=NonlinearFourier
+    }
+    else if (comboBox == &mlModelCombo_)
     {
         int selectedId = mlModelCombo_.getSelectedId();
         if (selectedId > 0)
@@ -862,6 +803,13 @@ int SettingsContent::getBufferSize() const
         case 6: return 4096;
         default: return 512;
     }
+}
+
+int SettingsContent::getAnalysisMethod() const
+{
+    // Return 0 for FFT, 1 for Nonlinear Fourier
+    int id = analysisMethodCombo_.getSelectedId();
+    return (id == 1) ? 0 : 1;  // 0 = FFT, 1 = Nonlinear Fourier
 }
 
 void SettingsContent::setMLAnalysisEnabled(bool enabled)

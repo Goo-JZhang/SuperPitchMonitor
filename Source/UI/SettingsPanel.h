@@ -86,8 +86,12 @@ public:
     // Get current values
     float getA4Frequency() const { return (float)a4Slider_.getValue(); }
     bool getUseLogScale() const { return logScaleButton_.getToggleState(); }
-    float getDbRangeMin() const { return (float)dbMinSlider_.getValue(); }
-    float getDbRangeMax() const { return (float)dbMaxSlider_.getValue(); }
+    // Get selected analysis method for non-ML mode
+    int getAnalysisMethod() const;  // 0 = FFT, 1 = Nonlinear Fourier
+    
+    // Analysis method changed callback
+    using AnalysisMethodCallback = std::function<void(int)>;  // 0 = FFT, 1 = Nonlinear Fourier
+    void onAnalysisMethodChanged(AnalysisMethodCallback callback) { analysisMethodCallback_ = callback; }
     float getTimeWindow() const { return (float)timeWindowSlider_.getValue(); }
     int getTargetFPS() const;  // -1 for unlimited
     
@@ -148,19 +152,14 @@ private:
     juce::Label timeWindowLabel_;
     juce::Label timeWindowValueLabel_;
     
-    // Spectrum settings
-    juce::Label spectrumLabel_;
-    juce::Slider dbMinSlider_;
-    juce::Label dbMinLabel_;
-    juce::Slider dbMaxSlider_;
-    juce::Label dbMaxLabel_;
-    
     // Pitch detection settings
     juce::Label pitchLabel_;
-    juce::Slider minFreqSlider_;
-    juce::Label minFreqLabel_;
-    juce::Slider maxFreqSlider_;
-    juce::Label maxFreqLabel_;
+    
+    // Non-ML Analysis method selection (when ML is disabled)
+    juce::Label analysisMethodLabel_;
+    juce::ComboBox analysisMethodCombo_;  // FFT vs Nonlinear Fourier
+    
+    // ML Analysis toggle
     
     juce::ToggleButton mlAnalyzeButton_;  // ML Analysis toggle (default ON)
     juce::ToggleButton mlGpuButton_;      // ML GPU/CPU toggle (default ON = GPU)
@@ -193,6 +192,7 @@ private:
     MLAnalyzeCallback mlAnalyzeCallback_;
     MLModeCallback mlModeCallback_;
     MLModelCallback mlModelCallback_;
+    AnalysisMethodCallback analysisMethodCallback_;
     
     // Custom look and feel for limited popup menu height
     SettingsLookAndFeel lookAndFeel_;
