@@ -1,7 +1,6 @@
 #include "AudioEngine.h"
 #include "SpectrumAnalyzer.h"
 #include "PolyphonicDetector.h"
-#include "NonlinearFourierAnalyzer.h"
 #include "../Debug/AudioSimulator.h"
 #include "../Utils/Logger.h"
 
@@ -21,14 +20,10 @@ AudioEngine::AudioEngine()
     spectrumAnalyzer_ = std::make_unique<SpectrumAnalyzer>();
     polyphonicDetector_ = std::make_unique<PolyphonicDetector>();
     mlDetector_ = std::make_unique<MLPitchDetector>();
-    nonlinearFourierAnalyzer_ = std::make_unique<NonlinearFourierAnalyzer>();
     
     // Initialize spectrum analyzer with default values
     spectrumAnalyzer_->prepare(Config::Audio::DefaultSampleRate, 
                                Config::Spectrum::DefaultFFTOrder);
-    
-    // Initialize nonlinear Fourier analyzer
-    nonlinearFourierAnalyzer_->prepare(Config::Audio::DefaultSampleRate);
     
     // Initialize polyphonic detector with default values
     polyphonicDetector_->prepare(Config::Audio::DefaultSampleRate,
@@ -149,7 +144,6 @@ void AudioEngine::setMode(Mode mode)
     
     // Reinitialize processors
     spectrumAnalyzer_->prepare(sampleRate_, Config::Spectrum::DefaultFFTOrder);
-    nonlinearFourierAnalyzer_->prepare(sampleRate_);
     polyphonicDetector_->prepare(sampleRate_, Config::Pitch::MinFrequency, 
                                   Config::Pitch::MaxFrequency);
     
@@ -477,7 +471,6 @@ void AudioEngine::processAudioBlock(const juce::AudioBuffer<float>& buffer)
         spectrumData.sampleRate = sampleRate_;
         spectrumData.timestamp = juce::Time::getCurrentTime().toMilliseconds() / 1000.0;
         spectrumData.isMLMode = true;  // Mark as ML mode data
-        spectrumData.analysisMethod = SpectrumData::AnalysisMethod::MLModel;
         
         // Convert ML full spectrum (all 2048 bins) to spectrum format
         spectrumData.frequencies.reserve(mlSpectrum.size());
@@ -512,43 +505,13 @@ void AudioEngine::processAudioBlock(const juce::AudioBuffer<float>& buffer)
     }
     else
     {
-        // Non-ML Analysis: use selected method (FFT or Nonlinear Fourier)
+        // Non-ML Analysis: traditional FFT-based analysis
         SpectrumData spectrumData;
         spectrumData.sampleRate = static_cast<float>(sampleRate_);
         spectrumData.timestamp = juce::Time::getCurrentTime().toMilliseconds() / 1000.0;
         
-        if (analysisMethod_ == Config::TraditionalAnalysisMethod::NonlinearFourier && 
-            nonlinearFourierAnalyzer_->isPrepared())
-        {
-            // Use Nonlinear Fourier analysis (log-spaced bins, matches ML format)
-            std::vector<float> magnitudes, phases, frequencies;
-            nonlinearFourierAnalyzer_->process(buffer, magnitudes, phases, frequencies);
-            
-            // Populate spectrum data
-            spectrumData.frequencies = std::move(frequencies);
-            spectrumData.magnitudes = std::move(magnitudes);
-            // Store phases for potential phase vocoder use
-            // Note: phases not stored in SpectrumData, but could be added if needed
-            spectrumData.isNonlinearFourierMode = true;
-            spectrumData.analysisMethod = SpectrumData::AnalysisMethod::NonlinearFourier;
-            spectrumData.fftSize = Config::Spectrum::NonlinearFourierWindowSize;
-            spectrumData.hopSize = nonlinearFourierAnalyzer_->getHopSize();
-            
-            // Provide raw audio for YIN algorithm
-            const auto& rawAudio = nonlinearFourierAnalyzer_->getRawAudioWindow();
-            spectrumData.rawAudio.assign(rawAudio.begin(), rawAudio.end());
-            spectrumData.hasRawAudio = true;
-            
-            SPM_LOG_INFO("[AudioEngine] Using Nonlinear Fourier analysis (" 
-                        + juce::String(spectrumData.frequencies.size()) + " bins)");
-        }
-        else
-        {
-            // Fallback to traditional FFT-based analysis
-            spectrumAnalyzer_->process(buffer, spectrumData);
-            spectrumData.isFFTMode = true;
-            spectrumData.analysisMethod = SpectrumData::AnalysisMethod::FFT;
-        }
+        spectrumAnalyzer_->process(buffer, spectrumData);
+        spectrumData.isFFTMode = true;
         
         if (spectrumCallback_)
         {
@@ -798,28 +761,6 @@ void AudioEngine::setDetectionRange(float minFreq, float maxFreq)
     {
         // ML detector uses fixed 20-5000Hz range in model
         // But we can filter results
-    }
-}
-
-void AudioEngine::setAnalysisMethod(Config::TraditionalAnalysisMethod method)
-{
-    if (analysisMethod_ == method)
-        return;
-    
-    analysisMethod_ = method;
-    
-    juce::String methodName = (method == Config::TraditionalAnalysisMethod::FFT) 
-        ? "Standard FFT" 
-        : "Nonlinear Fourier";
-    
-    SPM_LOG_INFO("[AudioEngine] Non-ML analysis method set to: " + methodName);
-    
-    // Ensure nonlinear Fourier analyzer is prepared if selected
-    if (method == Config::TraditionalAnalysisMethod::NonlinearFourier && 
-        nonlinearFourierAnalyzer_ && 
-        !nonlinearFourierAnalyzer_->isPrepared())
-    {
-        nonlinearFourierAnalyzer_->prepare(sampleRate_);
     }
 }
 

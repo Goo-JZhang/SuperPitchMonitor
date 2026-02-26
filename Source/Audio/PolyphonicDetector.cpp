@@ -126,6 +126,7 @@ void PolyphonicDetector::detectPolyphonicFFT(const SpectrumData& spectrum, Pitch
     
     std::vector<Peak> peaks;
     float maxMag = *std::max_element(spectrum.magnitudes.begin(), spectrum.magnitudes.end());
+    
     float threshold = std::max(maxMag * 0.005f, 0.0005f);
     findPeaksInBand(singleBand, peaks, 1, threshold);
     
@@ -452,11 +453,25 @@ void PolyphonicDetector::findPeaksInBand(const BandSpectrumData& bandData,
         case 2: minFreq = 2000.0f; maxFreq = 6000.0f; break;
     }
     
-    // FIX: Removed *2 factor - frequencies.size() already equals fftSize/2+1
-    int startBin = static_cast<int>(minFreq / bandData.sampleRate * bandData.frequencies.size());
-    int endBin = static_cast<int>(maxFreq / bandData.sampleRate * bandData.frequencies.size());
-    startBin = std::max(2, startBin);
-    endBin = std::min(static_cast<int>(mags.size()) - 2, endBin);
+    // Find start and end bins that cover the frequency range
+    int startBin = 2;  // Skip DC and first bin
+    int endBin = static_cast<int>(mags.size()) - 2;
+    
+    // Find actual frequency boundaries by scanning
+    if (!bandData.frequencies.empty()) {
+        for (int i = 0; i < static_cast<int>(bandData.frequencies.size()); ++i) {
+            if (bandData.frequencies[i] >= minFreq) {
+                startBin = std::max(2, i);
+                break;
+            }
+        }
+        for (int i = static_cast<int>(bandData.frequencies.size()) - 1; i >= 0; --i) {
+            if (bandData.frequencies[i] <= maxFreq) {
+                endBin = std::min(static_cast<int>(mags.size()) - 2, i);
+                break;
+            }
+        }
+    }
     
 
     for (int i = startBin; i < endBin; ++i)
@@ -464,36 +479,58 @@ void PolyphonicDetector::findPeaksInBand(const BandSpectrumData& bandData,
         float mag = mags[i];
         if (mag < actualThreshold) continue;
         
-        // Relax local max detection: higher than 1 point on each side
-        if (mag > mags[i-1] && mag > mags[i+1])
-        {
-            // Relax check: peak should be above surroundings (at least 5%)
-            float neighborAvg = (mags[i-1] + mags[i+1]) * 0.5f;
-            if (mag < neighborAvg * 1.05f) {
-                continue;
-            }
+        // Relax local max detection: higher than OR EQUAL to 1 point on each side
+        // For Nonlinear Fourier, the peak top can be very flat
+        bool isLocalMax = (mag >= mags[i-1] && mag >= mags[i+1]);
+        if (!isLocalMax) continue;
+        
+        // Skip if this is a plateau (equal to both neighbors) - not a true peak
+        if (mag == mags[i-1] && mag == mags[i+1]) continue;
+        
+        // Check peak prominence - use different threshold for Nonlinear Fourier
+        float neighborAvg = (mags[i-1] + mags[i+1]) * 0.5f;
+        float prominenceThreshold = bandData.frequencies.size() == 2048 ? 1.01f : 1.05f;
+        if (mag < neighborAvg * prominenceThreshold) {
+            continue;
+        }
+        
+        Peak peak;
+        peak.bin = i;
+        peak.bandIndex = bandIndex;
+        
+        // Use raw bin frequency for peak detection
+        peak.frequency = bandData.frequencies[i];
             
-            Peak peak;
-            peak.bin = i;
-            peak.bandIndex = bandIndex;
-            
-            // Use raw FFT bin frequency for peak detection
-            // Phase-vocoder refined frequencies can be unreliable for polyphonic signals
-            // because each bin may contain energy from multiple sources
-            peak.frequency = bandData.frequencies[i];
-            
+            // Calculate magnitude with parabolic interpolation for better peak height estimate
+            // Note: This assumes linearly-spaced bins. For log-spaced bins (Nonlinear Fourier),
+            // the frequency estimate from parabolic interpolation may be slightly off,
+            // but the magnitude estimate is still useful.
             float alpha = mags[i-1];
             float beta = mag;
             float gamma = mags[i+1];
             float denom = alpha - 2.0f * beta + gamma;
             if (std::abs(denom) > 1e-10f) {
                 peak.magnitude = beta - 0.25f * (alpha - gamma) * (alpha - gamma) / denom;
+                
+                // Only apply frequency correction for linearly-spaced frequencies
+                // For non-linear spacing, bin center frequency is more accurate
+                // Check if frequencies are approximately linearly spaced
+                float freqDiffLeft = bandData.frequencies[i] - bandData.frequencies[i-1];
+                float freqDiffRight = bandData.frequencies[i+1] - bandData.frequencies[i];
+                float avgDiff = (freqDiffLeft + freqDiffRight) * 0.5f;
+                float diffVariation = std::abs(freqDiffLeft - freqDiffRight) / avgDiff;
+                
+                // If frequency spacing is relatively uniform (linear), apply parabolic interpolation
+                if (diffVariation < 0.1f) {
+                    float p = 0.5f * (alpha - gamma) / denom;
+                    peak.frequency = bandData.frequencies[i] + p * avgDiff;
+                }
+                // For non-linear spacing (log-spaced), use bin center frequency
             } else {
                 peak.magnitude = mag;
             }
             
             peaks.push_back(peak);
-        }
     }
 }
 

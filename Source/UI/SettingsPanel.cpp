@@ -183,17 +183,6 @@ void SettingsContent::setupComponents()
     pitchLabel_.setColour(juce::Label::textColourId, juce::Colours::cyan);
     addAndMakeVisible(pitchLabel_);
     
-    // Analysis method selection (shown when ML is disabled)
-    analysisMethodLabel_.setText("Non-ML Method:", juce::dontSendNotification);
-    analysisMethodLabel_.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    addAndMakeVisible(analysisMethodLabel_);
-    
-    analysisMethodCombo_.addItem("Standard FFT", 1);
-    analysisMethodCombo_.addItem("Nonlinear Fourier (Log-spaced, 2048 bins)", 2);
-    analysisMethodCombo_.setSelectedId(2, juce::dontSendNotification);  // Default to Nonlinear Fourier
-    analysisMethodCombo_.addListener(this);
-    addAndMakeVisible(analysisMethodCombo_);
-    
     mlAnalyzeButton_.setButtonText("ML Analysis (GPU Neural Network)");
     mlAnalyzeButton_.setToggleState(true, juce::dontSendNotification);  // Default ON
     mlAnalyzeButton_.addListener(this);
@@ -284,10 +273,6 @@ void SettingsContent::loadSettings()
     timeWindowSlider_.setValue(timeWindow, juce::dontSendNotification);
     timeWindowValueLabel_.setText(juce::String(timeWindow, 1) + " s", juce::dontSendNotification);
     
-    // Load analysis method (default to Nonlinear Fourier = 2)
-    int analysisMethod = props->getIntValue("analysisMethod", 2);
-    analysisMethodCombo_.setSelectedId(analysisMethod, juce::dontSendNotification);
-    
     // Load buffer size
     int bufferSize = props->getIntValue("bufferSize", 512);
     int bufferId = 3;  // default 512
@@ -320,7 +305,6 @@ void SettingsContent::saveSettings()
     props->setValue("logScale", logScaleButton_.getToggleState());
     props->setValue("showNotes", showNotesButton_.getToggleState());
     props->setValue("timeWindow", timeWindowSlider_.getValue());
-    props->setValue("analysisMethod", analysisMethodCombo_.getSelectedId());
     props->setValue("bufferSize", getBufferSize());
     
     appProps.saveIfNeeded();
@@ -503,12 +487,6 @@ void SettingsContent::resized()
     pitchLabel_.setBounds(margin, y, 250, 25);
     y += 30;
     
-    // Analysis method selection row
-    auto methodRow = juce::Rectangle<int>(margin, y, contentWidth - 2*margin, 30);
-    analysisMethodLabel_.setBounds(methodRow.removeFromLeft(110));
-    analysisMethodCombo_.setBounds(methodRow);
-    y += 40;
-    
     mlAnalyzeButton_.setBounds(margin, y, 350, 30);
     y += 35;
     
@@ -599,16 +577,7 @@ void SettingsContent::sliderValueChanged(juce::Slider* slider)
 
 void SettingsContent::comboBoxChanged(juce::ComboBox* comboBox)
 {
-    if (comboBox == &analysisMethodCombo_)
-    {
-        int methodId = analysisMethodCombo_.getSelectedId();
-        juce::String methodName = (methodId == 1) ? "Standard FFT" : "Nonlinear Fourier";
-        SPM_LOG_INFO("[Settings] Analysis method changed to: " + methodName);
-        
-        if (analysisMethodCallback_)
-            analysisMethodCallback_(methodId - 1);  // Convert to 0-indexed: 0=FFT, 1=NonlinearFourier
-    }
-    else if (comboBox == &mlModelCombo_)
+    if (comboBox == &mlModelCombo_)
     {
         int selectedId = mlModelCombo_.getSelectedId();
         if (selectedId > 0)
@@ -803,13 +772,6 @@ int SettingsContent::getBufferSize() const
         case 6: return 4096;
         default: return 512;
     }
-}
-
-int SettingsContent::getAnalysisMethod() const
-{
-    // Return 0 for FFT, 1 for Nonlinear Fourier
-    int id = analysisMethodCombo_.getSelectedId();
-    return (id == 1) ? 0 : 1;  // 0 = FFT, 1 = Nonlinear Fourier
 }
 
 void SettingsContent::setMLAnalysisEnabled(bool enabled)

@@ -59,24 +59,11 @@ namespace Spectrum {
     inline constexpr float MinDecibels = -90.0f;
     inline constexpr float MaxDecibels = -10.0f;
     
-    // Nonlinear Fourier analysis configuration
-    // Matches ML model output: 2048 logarithmically-spaced bins
-    inline constexpr int NonlinearFourierBins = 2048;
-    inline constexpr int NonlinearFourierWindowSize = 4096;
-    inline constexpr float NonlinearFourierMinFreq = 20.0f;
-    inline constexpr float NonlinearFourierMaxFreq = 5000.0f;
-    
     // Display bands
     inline constexpr int NumDisplayBands = 128;
 }
 
-// =============================================================================
-// Non-ML Spectrum Analysis Method
-// =============================================================================
-enum class TraditionalAnalysisMethod {
-    FFT,                // Standard FFT with linear frequency bins
-    NonlinearFourier    // Log-spaced frequency bins via direct DFT (matches ML output format)
-};
+
 
 // =============================================================================
 // Pitch Detection Settings

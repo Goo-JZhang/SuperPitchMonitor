@@ -86,12 +86,7 @@ public:
     // Get current values
     float getA4Frequency() const { return (float)a4Slider_.getValue(); }
     bool getUseLogScale() const { return logScaleButton_.getToggleState(); }
-    // Get selected analysis method for non-ML mode
-    int getAnalysisMethod() const;  // 0 = FFT, 1 = Nonlinear Fourier
-    
-    // Analysis method changed callback
-    using AnalysisMethodCallback = std::function<void(int)>;  // 0 = FFT, 1 = Nonlinear Fourier
-    void onAnalysisMethodChanged(AnalysisMethodCallback callback) { analysisMethodCallback_ = callback; }
+
     float getTimeWindow() const { return (float)timeWindowSlider_.getValue(); }
     int getTargetFPS() const;  // -1 for unlimited
     
@@ -155,10 +150,6 @@ private:
     // Pitch detection settings
     juce::Label pitchLabel_;
     
-    // Non-ML Analysis method selection (when ML is disabled)
-    juce::Label analysisMethodLabel_;
-    juce::ComboBox analysisMethodCombo_;  // FFT vs Nonlinear Fourier
-    
     // ML Analysis toggle
     
     juce::ToggleButton mlAnalyzeButton_;  // ML Analysis toggle (default ON)
@@ -192,7 +183,6 @@ private:
     MLAnalyzeCallback mlAnalyzeCallback_;
     MLModeCallback mlModeCallback_;
     MLModelCallback mlModelCallback_;
-    AnalysisMethodCallback analysisMethodCallback_;
     
     // Custom look and feel for limited popup menu height
     SettingsLookAndFeel lookAndFeel_;

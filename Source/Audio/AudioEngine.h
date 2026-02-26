@@ -26,7 +26,6 @@ namespace spm {
 // Forward declarations
 class SpectrumAnalyzer;
 class PolyphonicDetector;
-class NonlinearFourierAnalyzer;
 
 /**
  * Audio Engine
@@ -85,9 +84,7 @@ public:
     void setMLGPUEnabled(bool enabled);
     bool isMLGPUEnabled() const { return useMLGPU_; }
     
-    // Non-ML Analysis method control
-    void setAnalysisMethod(Config::TraditionalAnalysisMethod method);
-    Config::TraditionalAnalysisMethod getAnalysisMethod() const { return analysisMethod_; }
+
     
     // Buffer size control
     void setBufferSize(int newBufferSize);
@@ -137,15 +134,11 @@ private:
     std::unique_ptr<SpectrumAnalyzer> spectrumAnalyzer_;
     std::unique_ptr<PolyphonicDetector> polyphonicDetector_;
     std::unique_ptr<MLPitchDetector> mlDetector_;
-    std::unique_ptr<NonlinearFourierAnalyzer> nonlinearFourierAnalyzer_;
     
     // ML Analysis mode
     bool useMLAnalysis_ = true;  // Default ON
     bool useMLGPU_ = true;       // Default GPU ON
     juce::String mlModelPath_;   // Current model path
-    
-    // Non-ML Analysis method
-    Config::TraditionalAnalysisMethod analysisMethod_ = Config::TraditionalAnalysisMethod::NonlinearFourier;
     
     // Circular buffer (used in RealDevice mode)
     static constexpr int FIFOSize = 8;

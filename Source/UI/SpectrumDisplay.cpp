@@ -648,8 +648,8 @@ void SpectrumDisplay::drawModeLabel(juce::Graphics& g)
     // Determine mode: use preview state if no data yet
     bool hasData = !currentData_.magnitudes.empty() || !currentData_.mlConfidence.empty();
     bool isMLMode = currentData_.isMLMode || (!hasData && mlPreviewEnabled_);
-    // FFT and Nonlinear Fourier are both "Classical Mode" (traditional signal processing)
-    bool isClassicalMode = currentData_.isFFTMode || currentData_.isNonlinearFourierMode || 
+    // FFT is "Classical Mode" (traditional signal processing)
+    bool isClassicalMode = currentData_.isFFTMode || 
                            (!hasData && !mlPreviewEnabled_);
     
     if (isMLMode)
