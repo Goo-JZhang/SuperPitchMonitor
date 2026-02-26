@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """
 训练脚本 - 带实时可视化
+
+使用方式:
+    # 使用配置文件
+    python train_test.py --config trainconfig.txt
+    
+    # 命令行参数
+    python train_test.py --model PitchNetEnhanced --epochs 100
+    
+    # 指定数据集
+    python train_test.py --data SingleSanity,NoiseDatasetV2
 """
 
 import os
@@ -10,15 +20,14 @@ import time
 from pathlib import Path
 from datetime import datetime
 
-
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, random_split, ConcatDataset, ConcatDataset
-from torch.nn import Module
+from torch.utils.data import DataLoader, random_split, ConcatDataset
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+
 # 跨平台matplotlib后端设置
 import matplotlib
 import platform
@@ -39,7 +48,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / 'Model'))
 
-from PitchNetBaseline import PitchNetBaseline
+# 导入配置工具
+from train_config_utils import (
+    add_common_training_args, get_training_config,
+    create_model, list_available_models,
+    get_default_data_root, get_project_root
+)
 from loss import PitchDetectionLoss
 from modeloutput_utils import export_model_with_metadata, format_training_info
 from dataset import DatasetReader
@@ -203,49 +217,73 @@ def validate(model, dataloader, device, criterion):
     return {k: v / count for k, v in metrics_sum.items()}
 
 
+def parse_args():
+    """解析命令行参数"""
+    parser = argparse.ArgumentParser(description='Training script with visualization')
+    return add_common_training_args(parser).parse_args()
+
+
 def main():
-    # 配置 (跨平台路径)
-    script_dir = Path(__file__).parent.resolve()
-    project_root = script_dir.parent.parent.parent  # 到项目根目录
+    args = parse_args()
     
-    # 训练参数
-    batch_size = 128  # RTX 4080S 可用更大batch
-    epochs = 50
-    lr = 0.001
-    val_split = 0.02  # 2%验证集，每类数据单独拆分
-    # 自动选择设备: CUDA > MPS (Apple Silicon) > CPU
+    # 获取完整配置
+    config = get_training_config(args)
+    
+    # 项目路径
+    project_root = get_project_root()
+    
+    # 提取配置参数
+    data_root = config.get('data_root') or config.get('root_dir') or str(get_default_data_root())
+    data_subdirs = config.get('data_subdirs') or config.get('subdirs')
+    model_name = config.get('model_name', 'PitchNetBaseline')
+    pretrained_path = config.get('pretrained') or config.get('path')
+    epochs = config.get('epochs', 50)
+    batch_size = config.get('batch_size', 128)
+    lr = config.get('lr', 0.001)
+    val_split = config.get('val_split', 0.02)
+    seed = config.get('seed', 42)
+    preload = config.get('preload', True)
+    
+    print("=" * 70)
+    print("Training Configuration")
+    print("=" * 70)
+    print(f"Model: {model_name}")
+    print(f"Data root: {data_root}")
+    print(f"Data subdirs: {data_subdirs}")
+    print(f"Epochs: {epochs}, Batch: {batch_size}, LR: {lr}")
+    print("=" * 70)
+    
+    # 设置随机种子
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    
+    # 设备
     if torch.cuda.is_available():
         device = torch.device('cuda')
-        print(f"Device: CUDA ({torch.cuda.get_device_name(0)})")
+        print(f"\nDevice: CUDA ({torch.cuda.get_device_name(0)})")
+        torch.backends.cudnn.benchmark = True
     elif torch.backends.mps.is_available():
         device = torch.device('mps')
-        print(f"Device: MPS (Apple Silicon GPU)")
+        print(f"\nDevice: MPS")
     else:
         device = torch.device('cpu')
-        print(f"Device: CPU")
+        print(f"\nDevice: CPU")
     
-    # 平台特定优化
-    if device.type == 'mps':
-        print("  Tip: First epoch may be slower due to MPS shader compilation")
-    elif device.type == 'cuda':
-        torch.backends.cudnn.benchmark = True
-        print(f"  CUDA Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
-        print(f"  cuDNN benchmark: enabled")
+    # 数据子目录
+    if not data_subdirs:
+        # 默认数据集
+        data_subdirs = ['SingleSanity', 'NoiseDatasetV2']
     
-    # 硬编码加载指定数据集（后续添加新数据集需手动修改此处）
-    data_root = project_root / 'TrainingData'
-    data_subdirs = ['SingleSanity', 'NoiseDatasetV2']  # 使用V2版本噪声数据（31种×1000=31000样本）
-    
-    print(f"Loading {len(data_subdirs)} dataset type(s): {data_subdirs}")
+    print(f"\nLoading {len(data_subdirs)} dataset type(s): {data_subdirs}")
     train_datasets = []
     val_datasets = []
 
     for subdir in data_subdirs:
-        data_dir = data_root / subdir
+        data_dir = Path(data_root) / subdir
         if not (data_dir / 'meta.json').exists():
             print(f"  Warning: {subdir} not found or invalid, skipping...")
             continue
-        ds = DatasetReader(str(data_dir), preload=True, device=str(device))
+        ds = DatasetReader(str(data_dir), preload=preload, device=str(device))
         n_val = max(1, int(len(ds) * val_split))
         n_train = len(ds) - n_val
         ds_train, ds_val = random_split(ds, [n_train, n_val])
@@ -257,8 +295,7 @@ def main():
     train_dataset = ConcatDataset(train_datasets)
     val_dataset = ConcatDataset(val_datasets)
     
-    # 内存数据集不需要多进程 workers
-    # DataLoader (pin_memory 禁用，因为数据可能已在 GPU)
+    # DataLoader
     train_loader = DataLoader(
         train_dataset, 
         batch_size=batch_size, 
@@ -273,15 +310,28 @@ def main():
         pin_memory=False
     )
     
-    # 模型
-    model = PitchNetBaseline().to(device)
-    print(f"Model parameters: {model.count_parameters()/1e6:.2f}M")
+    # 模型创建（使用工厂函数）
+    print(f"\nInitializing model: {model_name}")
+    try:
+        model = create_model(model_name)
+    except ValueError as e:
+        print(f"Error: {e}")
+        print(f"Available models: {list_available_models()}")
+        return
     
-    # GPU预热 (MPS需要编译shader, CUDA需要warmup + cuDNN算法搜索)
+    model = model.to(device)
+    print(f"Parameters: {sum(p.numel() for p in model.parameters())/1e6:.2f}M")
+    
+    # 加载预训练权重
+    if pretrained_path:
+        print(f"Loading pretrained weights from: {pretrained_path}")
+        checkpoint = torch.load(pretrained_path, map_location='cpu')
+        model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
+    
+    # GPU预热
     if device.type in ['mps', 'cuda']:
         print("Warming up GPU...")
         with torch.no_grad():
-            # 使用实际batch size预热，触发cuDNN算法搜索
             warmup_batch = batch_size
             dummy_input = torch.randn(warmup_batch, 1, 4096).to(device)
             _ = model(dummy_input)
@@ -339,7 +389,7 @@ def main():
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'val_loss': best_val_loss,
-                }, '../../../MLModel/checkpoints/best_model.pth')
+                }, str(project_root / 'MLModel' / 'checkpoints' / 'best_model.pth'))
             
             elapsed = time.time() - start_time
             print(f"Epoch {epoch:2d}/{epochs} | {elapsed:.1f}s | "
@@ -358,30 +408,30 @@ def main():
         live_plot.close()
         
         # 保存最终模型
-        final_path = '../../../MLModel/checkpoints/final_model.pth'
+        final_path = project_root / 'MLModel' / 'checkpoints' / 'final_model.pth'
         torch.save({
             'epoch': epoch if not interrupted else epoch - 1,
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
-        }, final_path)
+        }, str(final_path))
         
         # 如果不是中断的，导出ONNX
         if not interrupted:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             try:
-                # 准备模型导出（eval模式，移到CPU）
+                # 准备模型导出
                 model.eval()
                 model.cpu()
                 
                 # 构建训练信息
                 training_info = format_training_info(
                     config={'data_subdirs': data_subdirs, 'epochs': epochs, 
-                            'batch_size': batch_size, 'lr': lr},
+                            'batch_size': batch_size, 'lr': lr, 'model': model_name},
                     best_val_loss=best_val_loss,
                     device=device
                 )
                 
-                # 使用绝对路径
+                # 导出
                 mlmodel_dir = Path(project_root) / 'MLModel'
                 mlmodel_dir.mkdir(parents=True, exist_ok=True)
                 
@@ -397,11 +447,11 @@ def main():
                 print(f"\nONNX Export Error: {e}")
                 traceback.print_exc()
             
-            # 明显的完成提示
             print("\n" + "="*70)
             print("TRAINING COMPLETED SUCCESSFULLY!")
             print("="*70)
-            print(f"Best model:    ../../../MLModel/checkpoints/best_model.pth")
+            print(f"Model:         {model_name}")
+            print(f"Best model:    {project_root / 'MLModel' / 'checkpoints' / 'best_model.pth'}")
             print(f"Final model:   {final_path}")
             print(f"{onnx_msg}")
             print(f"Total epochs:  {epochs}")

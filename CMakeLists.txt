@@ -45,6 +45,15 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_CURRENT_SOURCE_DIR}")
 
 include(FetchContent)
 
+# Check for existing JUCE source in ThirdParty/juce/src (preferred) or juce-src
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/juce/src/CMakeLists.txt")
+    set(FETCHCONTENT_SOURCE_DIR_JUCE "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/juce/src" CACHE PATH "" FORCE)
+    message(STATUS "Using existing JUCE source: ${FETCHCONTENT_SOURCE_DIR_JUCE}")
+elseif(EXISTS "${FETCHCONTENT_BASE_DIR}/juce-src/CMakeLists.txt")
+    set(FETCHCONTENT_SOURCE_DIR_JUCE "${FETCHCONTENT_BASE_DIR}/juce-src" CACHE PATH "" FORCE)
+    message(STATUS "Using existing JUCE source: ${FETCHCONTENT_SOURCE_DIR_JUCE}")
+endif()
+
 FetchContent_Declare(
     JUCE
     GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
@@ -230,10 +239,32 @@ if(BUILD_ONNXRUNTIME_FROM_SOURCE)
             COMMENT "Copying ONNX Runtime library..."
         )
     elseif(WIN32)
+        # Copy ONNX Runtime core DLL
         add_custom_command(TARGET SuperPitchMonitor POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ONNXRUNTIME_BIN_DIR}/onnxruntime.dll $<TARGET_FILE_DIR:SuperPitchMonitor>
             COMMENT "Copying ONNX Runtime DLL..."
         )
+        # Copy CUDA execution provider (if exists)
+        if(EXISTS ${ONNXRUNTIME_BIN_DIR}/onnxruntime_providers_cuda.dll)
+            add_custom_command(TARGET SuperPitchMonitor POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ONNXRUNTIME_BIN_DIR}/onnxruntime_providers_cuda.dll $<TARGET_FILE_DIR:SuperPitchMonitor>
+                COMMENT "Copying ONNX Runtime CUDA provider..."
+            )
+        endif()
+        # Copy shared execution provider (if exists)
+        if(EXISTS ${ONNXRUNTIME_BIN_DIR}/onnxruntime_providers_shared.dll)
+            add_custom_command(TARGET SuperPitchMonitor POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ONNXRUNTIME_BIN_DIR}/onnxruntime_providers_shared.dll $<TARGET_FILE_DIR:SuperPitchMonitor>
+                COMMENT "Copying ONNX Runtime shared provider..."
+            )
+        endif()
+        # Copy DirectML execution provider (if exists)
+        if(EXISTS ${ONNXRUNTIME_BIN_DIR}/onnxruntime_providers_dml.dll)
+            add_custom_command(TARGET SuperPitchMonitor POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ONNXRUNTIME_BIN_DIR}/onnxruntime_providers_dml.dll $<TARGET_FILE_DIR:SuperPitchMonitor>
+                COMMENT "Copying ONNX Runtime DirectML provider..."
+            )
+        endif()
     endif()
 else()
     message(STATUS "ONNX Runtime: Using pre-built binary (fast, limited operators)")

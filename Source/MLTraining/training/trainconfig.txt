@@ -3,7 +3,7 @@
 
 # === 模型配置 ===
 [model]
-name = PitchNetBaseline
+name = PitchNetEnhancedV4
 # path = ../../../MLModel/pretrained.pth  # 可选：预训练权重路径
 
 # === 数据配置 ===

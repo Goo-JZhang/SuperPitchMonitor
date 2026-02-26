@@ -154,10 +154,52 @@ class DataVisualizer:
         
         try:
             import torch
-            from PitchNetBaseline import PitchNetBaseline
+            from pathlib import Path
             
-            print(f"Loading model: {model_info['name']}...")
-            model = PitchNetBaseline()
+            # 从元数据文件读取模型名称
+            model_path = Path(model_info['path'])
+            meta_path = model_path.with_suffix('.txt')
+            model_class_name = None
+            
+            if meta_path.exists():
+                try:
+                    with open(meta_path, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            if line.startswith('Model Name:'):
+                                model_class_name = line.split(':', 1)[1].strip()
+                                break
+                except Exception as e:
+                    print(f"Warning: Could not read metadata file: {e}")
+            
+            # 如果元数据中没有找到，回退到文件名推断
+            # 文件名格式: ModelName_timestamp.pth，取第一个'_'前的部分
+            if model_class_name is None:
+                filename = model_info['name']  # e.g., "PitchNetEnhanced_20260224_231732"
+                model_class_name = filename.split('_')[0]  # e.g., "PitchNetEnhanced"
+                print(f"Model name not found in metadata, using filename inference: {model_class_name}")
+            
+            print(f"Loading model: {model_info['name']} (Type: {model_class_name})...")
+            
+            # 动态导入模型类
+            if model_class_name == 'PitchNetEnhancedV4':
+                from PitchNetEnhancedV4 import PitchNetEnhancedV4
+                model_class = PitchNetEnhancedV4
+            elif model_class_name == 'PitchNetEnhancedV3':
+                from PitchNetEnhancedV3 import PitchNetEnhancedV3
+                model_class = PitchNetEnhancedV3
+            elif model_class_name == 'PitchNetEnhancedV2':
+                from PitchNetEnhancedV2 import PitchNetEnhancedV2
+                model_class = PitchNetEnhancedV2
+            elif model_class_name == 'PitchNetEnhanced':
+                from PitchNetEnhanced import PitchNetEnhanced
+                model_class = PitchNetEnhanced
+            elif model_class_name == 'PitchNetBaseline':
+                from PitchNetBaseline import PitchNetBaseline
+                model_class = PitchNetBaseline
+            else:
+                raise ValueError(f"Unknown model type: {model_class_name}")
+            
+            model = model_class()
             checkpoint = torch.load(model_info['path'], map_location='cpu')
             model.load_state_dict(checkpoint['model_state_dict'])
             model.eval()
@@ -462,12 +504,21 @@ class DataVisualizer:
         计算二元交叉熵损失 BCE
         训练时 confidence 使用 BCE 损失
         """
-        epsilon = 1e-7
-        # 裁剪避免 log(0)
-        y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
-        y_true = np.clip(y_true, epsilon, 1 - epsilon)
+        epsilon = 1e-6  # 增大 epsilon 避免数值不稳定
+        # 裁剪避免 log(0) 或 log(1) 导致的 inf
+        y_pred = np.clip(y_pred, epsilon, 1.0 - epsilon)
         # BCE = -[y*log(p) + (1-y)*log(1-p)]
-        return -np.mean(y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred))
+        # 只在 y_true > 0 的位置计算正类损失，y_true = 0 的位置只计算负类损失
+        loss = 0.0
+        # 正类损失 (y=1)
+        pos_mask = y_true > 0
+        if pos_mask.any():
+            loss += -np.mean(y_true[pos_mask] * np.log(y_pred[pos_mask]))
+        # 负类损失 (y=0)
+        neg_mask = y_true == 0
+        if neg_mask.any():
+            loss += -np.mean((1 - y_true[neg_mask]) * np.log(1 - y_pred[neg_mask]))
+        return loss
     
     def _display_sample(self, idx):
         """显示样本 - 3x3 布局"""

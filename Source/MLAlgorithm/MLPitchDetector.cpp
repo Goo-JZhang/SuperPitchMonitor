@@ -47,11 +47,16 @@ bool MLPitchDetector::initialize(const Config& config)
         
         // Get available execution providers
         auto availableProviders = Ort::GetAvailableProviders();
-        DBG("ML: Available execution providers:");
+        SPM_LOG_INFO("[ML] Available execution providers:");
         for (const auto& provider : availableProviders)
         {
-            DBG("  - " + juce::String(provider));
+            SPM_LOG_INFO("[ML]   - " + juce::String(provider));
         }
+        
+        // Log compile-time flags
+        SPM_LOG_INFO("[ML] Compile-time flags:");
+        SPM_LOG_INFO("[ML]   - HAS_CUDA_EP = " + juce::String(HAS_CUDA_EP));
+        SPM_LOG_INFO("[ML]   - HAS_DML_EP = " + juce::String(HAS_DML_EP));
         
         // Platform-specific GPU execution providers
         bool gpuEnabled = false;
@@ -101,40 +106,82 @@ bool MLPitchDetector::initialize(const Config& config)
                     hasDML = true;
             }
             
+            SPM_LOG_INFO("[ML] Runtime detection:");
+            SPM_LOG_INFO("[ML]   - hasCUDA = " + juce::String(hasCUDA ? "true" : "false"));
+            SPM_LOG_INFO("[ML]   - hasDML = " + juce::String(hasDML ? "true" : "false"));
+            
             // 1. Try CUDA (NVIDIA GPUs)
             if (hasCUDA && HAS_CUDA_EP)
             {
-                DBG("ML: Enabling CUDA execution provider for NVIDIA GPU");
-                OrtCUDAProviderOptionsV2* cudaOptions = nullptr;
-                Ort::ThrowOnError(Ort::GetApi().CreateCUDAProviderOptions(&cudaOptions));
-                
-                // Use AppendExecutionProvider_CUDA_V2
-                sessionOptions.AppendExecutionProvider_CUDA_V2(*cudaOptions);
-                gpuEnabled = true;
-                DBG("ML: CUDA enabled successfully - RTX 4080S ready!");
+                SPM_LOG_INFO("[ML] Attempting to enable CUDA execution provider...");
+                try
+                {
+                    OrtCUDAProviderOptionsV2* cudaOptions = nullptr;
+                    Ort::ThrowOnError(Ort::GetApi().CreateCUDAProviderOptions(&cudaOptions));
+                    SPM_LOG_INFO("[ML] CUDA provider options created successfully");
+                    
+                    // Use AppendExecutionProvider_CUDA_V2
+                    sessionOptions.AppendExecutionProvider_CUDA_V2(*cudaOptions);
+                    gpuEnabled = true;
+                    SPM_LOG_INFO("[ML] CUDA enabled successfully - RTX 4080S ready!");
+                }
+                catch (const Ort::Exception& e)
+                {
+                    SPM_LOG_ERROR("[ML] ERROR - CUDA initialization failed: " + juce::String(e.what()));
+                    SPM_LOG_INFO("[ML] This may indicate:");
+                    SPM_LOG_INFO("[ML]   1. CUDA runtime libraries (cudart64_*.dll) are not found");
+                    SPM_LOG_INFO("[ML]   2. cuDNN libraries are missing");
+                    SPM_LOG_INFO("[ML]   3. NVIDIA driver is outdated");
+                    SPM_LOG_INFO("[ML]   4. GPU memory allocation failed");
+                }
+                catch (const std::exception& e)
+                {
+                    SPM_LOG_ERROR("[ML] ERROR - CUDA initialization failed (std): " + juce::String(e.what()));
+                }
             }
-            else if (hasCUDA)
+            else if (hasCUDA && !HAS_CUDA_EP)
             {
-                DBG("ML: CUDA available in library but headers not found");
+                SPM_LOG_WARNING("[ML] WARNING - CUDA available in library but headers not found at compile time");
+                SPM_LOG_INFO("[ML] HAS_CUDA_EP = 0, cannot enable CUDA");
+                SPM_LOG_INFO("[ML] Rebuild with cuda_provider_factory.h in include path");
+            }
+            else if (!hasCUDA && HAS_CUDA_EP)
+            {
+                SPM_LOG_WARNING("[ML] WARNING - CUDA headers found at compile time but not in runtime library");
+                SPM_LOG_INFO("[ML] The ONNX Runtime library may be CPU-only version");
+            }
+            else
+            {
+                SPM_LOG_INFO("[ML] CUDA not available (hasCUDA=false, HAS_CUDA_EP=0)");
             }
             
             // 2. Fallback to DirectML (AMD/Intel GPUs)
             if (!gpuEnabled && hasDML && HAS_DML_EP)
             {
-                DBG("ML: Enabling DirectML execution provider (fallback)");
-                Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(sessionOptions, 0));
-                gpuEnabled = true;
-                DBG("ML: DirectML enabled successfully");
+                DBG("ML: Attempting to enable DirectML execution provider (fallback)...");
+                try
+                {
+                    Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(sessionOptions, 0));
+                    gpuEnabled = true;
+                    DBG("ML: DirectML enabled successfully");
+                }
+                catch (const Ort::Exception& e)
+                {
+                    DBG("ML: ERROR - DirectML initialization failed: " + juce::String(e.what()));
+                }
             }
-            else if (!gpuEnabled && hasDML)
+            else if (!gpuEnabled && hasDML && !HAS_DML_EP)
             {
-                DBG("ML: DirectML available but headers not found");
+                DBG("ML: WARNING - DirectML available in library but headers not found");
             }
             
             if (!gpuEnabled)
             {
                 DBG("ML: No GPU execution provider available (using CPU)");
-                DBG("ML: For RTX 4080S, ensure CUDA-enabled ONNX Runtime is downloaded");
+                DBG("ML: For RTX 4080S, ensure:");
+                DBG("     1. ONNX Runtime GPU version is used (onnxruntime-win-x64-gpu)");
+                DBG("     2. CUDA/cuDNN DLLs are in PATH or same directory as exe");
+                DBG("     3. NVIDIA driver >= 520.00");
             }
             
 #elif defined(JUCE_ANDROID)

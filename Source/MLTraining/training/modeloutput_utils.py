@@ -77,6 +77,7 @@ def export_model_with_metadata(model, output_dir, timestamp, training_info=None)
     # 使用传统导出器 (更稳定)
     print(f"[DEBUG] Starting ONNX export to: {onnx_path}")
     try:
+        # 尝试使用 opset 18 (Attention等操作需要)
         torch.onnx.export(
             model,
             dummy_input,
@@ -84,13 +85,32 @@ def export_model_with_metadata(model, output_dir, timestamp, training_info=None)
             input_names=['input'],
             output_names=['output'],
             dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}},
-            opset_version=17,
+            opset_version=18,  # 使用18以支持更多操作
             do_constant_folding=True,
         )
         print(f"[DEBUG] ONNX export completed successfully")
     except Exception as e:
-        print(f"[DEBUG] ONNX export failed with error: {e}")
-        raise
+        print(f"[DEBUG] ONNX export with opset 18 failed: {e}")
+        print(f"[DEBUG] Trying legacy export with opset 17...")
+        try:
+            # 回退到旧版导出器
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                torch.onnx.export(
+                    model,
+                    dummy_input,
+                    onnx_path,
+                    input_names=['input'],
+                    output_names=['output'],
+                    dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}},
+                    opset_version=17,
+                    do_constant_folding=False,  # 禁用常量折叠
+                )
+            print(f"[DEBUG] Legacy ONNX export completed")
+        except Exception as e2:
+            print(f"[DEBUG] Legacy export also failed: {e2}")
+            raise
     
     # 导出 PyTorch 模型 (.pth)
     pth_filename = f"{model_name}_{timestamp}.pth"

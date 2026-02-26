@@ -276,11 +276,18 @@ if(ONNXRUNTIME_ALREADY_BUILT)
     add_custom_target(onnxruntime_build)
     
     # Set output variables
+    # Main include dir for onnxruntime_c_api.h (in source tree: include/onnxruntime/core/session/)
     set(ONNXRUNTIME_INCLUDE_DIR ${ONNXRUNTIME_ROOT}/include/onnxruntime/core/session)
+    # Additional include dirs for provider headers
+    # Note: 
+    # - CUDA implementation headers are in onnxruntime/core/providers/cuda/ (relative to src/)
+    # - DML API headers are in include/onnxruntime/core/providers/dml/
+    # - Provider headers use "core/framework/xxx.h" includes, so we need src/include/onnxruntime/ too
     set(ONNXRUNTIME_INCLUDE_DIR_EXTRA 
-        ${ONNXRUNTIME_ROOT}/include
-        ${ONNXRUNTIME_ROOT}/include/onnxruntime/core/providers/coreml
-        ${ONNXRUNTIME_ROOT}/include/onnxruntime/core/providers/cuda
+        ${ONNXRUNTIME_ROOT}
+        ${ONNXRUNTIME_ROOT}/include/onnxruntime
+        ${ONNXRUNTIME_ROOT}/onnxruntime/core/providers/coreml
+        ${ONNXRUNTIME_ROOT}/onnxruntime/core/providers/cuda
         ${ONNXRUNTIME_ROOT}/include/onnxruntime/core/providers/dml
     )
     set(ONNXRUNTIME_LIBRARY_DIR ${ONNXRUNTIME_INSTALL})
@@ -317,14 +324,18 @@ ExternalProject_Add(
 )
 
 # Set output variables
-# Main include dir for onnxruntime_c_api.h
+# Main include dir for onnxruntime_c_api.h (in source tree: include/onnxruntime/core/session/)
 set(ONNXRUNTIME_INCLUDE_DIR ${ONNXRUNTIME_ROOT}/include/onnxruntime/core/session)
 # Additional include dirs for provider headers (CoreML, CUDA, etc.)
-# Source build structure: include/onnxruntime/core/providers/<ep>/
+# Source build structure: 
+# - CUDA implementation headers are in onnxruntime/core/providers/cuda/ (relative to src/)
+# - DML API headers are in include/onnxruntime/core/providers/dml/
+# - Provider headers use "core/framework/xxx.h" includes, so we need src/include/onnxruntime/ too
 set(ONNXRUNTIME_INCLUDE_DIR_EXTRA 
-    ${ONNXRUNTIME_ROOT}/include
-    ${ONNXRUNTIME_ROOT}/include/onnxruntime/core/providers/coreml
-    ${ONNXRUNTIME_ROOT}/include/onnxruntime/core/providers/cuda
+    ${ONNXRUNTIME_ROOT}
+    ${ONNXRUNTIME_ROOT}/include/onnxruntime
+    ${ONNXRUNTIME_ROOT}/onnxruntime/core/providers/coreml
+    ${ONNXRUNTIME_ROOT}/onnxruntime/core/providers/cuda
     ${ONNXRUNTIME_ROOT}/include/onnxruntime/core/providers/dml
 )
 set(ONNXRUNTIME_LIBRARY_DIR ${ONNXRUNTIME_INSTALL})

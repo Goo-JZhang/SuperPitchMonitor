@@ -12,6 +12,9 @@
     # 命令行参数覆盖
     python train_live.py --epochs 100 --batch-size 64 --lr 0.0005
     
+    # 指定模型
+    python train_live.py --model PitchNetEnhanced
+    
     # 指定数据子目录
     python train_live.py --data SingleSanity,NoiseDataset
 """
@@ -21,7 +24,6 @@ import sys
 import json
 import time
 import argparse
-import io
 from pathlib import Path
 from datetime import datetime
 
@@ -53,9 +55,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / 'Model'))
 
-from PitchNetBaseline import PitchNetBaseline
+# 导入配置工具
+from train_config_utils import (
+    add_common_training_args, get_training_config,
+    create_model, list_available_models,
+    get_default_data_root, get_project_root
+)
 from dataset import DatasetReader
-from loss import EnergyLoss, ConfidenceLoss, PitchDetectionLoss
+from loss import PitchDetectionLoss
 from modeloutput_utils import export_model_with_metadata, format_training_info
 
 
@@ -140,6 +147,7 @@ class LiveTrainingPlot:
 
 
 def train_epoch(model, dataloader, optimizer, device, criterion):
+    """训练一个epoch"""
     model.train()
     metrics = {'total': 0, 'confidence': 0, 'energy': 0, 'sparsity': 0}
     count = 0
@@ -170,6 +178,7 @@ def train_epoch(model, dataloader, optimizer, device, criterion):
 
 
 def validate(model, dataloader, device, criterion):
+    """验证"""
     model.eval()
     metrics = {'total': 0, 'confidence': 0, 'energy': 0, 'sparsity': 0}
     count = 0
@@ -198,177 +207,35 @@ def validate(model, dataloader, device, criterion):
 def parse_args():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(description='Training script with live visualization')
-    
-    # 配置文件
-    parser.add_argument('--config', type=str, default=None,
-                       help='Path to config file (.txt, .json, or .yaml)')
-    
-    # 数据配置
-    parser.add_argument('--data-root', type=str, default=None,
-                       help='Root directory for training data')
-    parser.add_argument('--data', type=str, default=None,
-                       help='Comma-separated list of data subdirectories (e.g., "SingleSanity,NoiseDataset")')
-    parser.add_argument('--preload', action='store_true', default=None,
-                       help='Preload data to memory')
-    parser.add_argument('--streaming', action='store_true',
-                       help='Use streaming mode (no preload)')
-    parser.add_argument('--max-memory', type=float, default=4.0,
-                       help='Max memory for auto preload decision (GB)')
-    
-    # 模型配置
-    parser.add_argument('--model', type=str, default='PitchNetBaseline',
-                       help='Model name (PitchNetBaseline)')
-    parser.add_argument('--pretrained', type=str, default=None,
-                       help='Path to pretrained weights')
-    
-    # 训练配置
-    parser.add_argument('--epochs', type=int, default=50,
-                       help='Number of training epochs')
-    parser.add_argument('--batch-size', type=int, default=None,
-                       help='Batch size (default: 64 Mac, 128 others)')
-    parser.add_argument('--lr', type=float, default=0.001,
-                       help='Learning rate')
-    parser.add_argument('--val-split', type=float, default=0.02,
-                       help='Validation split ratio')
-    parser.add_argument('--seed', type=int, default=42,
-                       help='Random seed')
-    parser.add_argument('--no-viz', action='store_true',
-                       help='Disable visualization window')
-    
-    return parser.parse_args()
-
-
-def load_config_from_file(config_path: str):
-    """从文件加载配置"""
-    path = Path(config_path)
-    
-    if not path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
-    
-    suffix = path.suffix.lower()
-    
-    with open(path, 'r', encoding='utf-8') as f:
-        if suffix == '.json':
-            import json
-            return json.load(f)
-        elif suffix in ['.yaml', '.yml']:
-            import yaml
-            return yaml.safe_load(f)
-        else:
-            # 简单文本格式 key=value 或 [section]
-            return parse_txt_config(f.read())
-
-
-def parse_txt_config(content: str):
-    """解析简单文本配置"""
-    config = {}
-    current_section = None
-    
-    for line in content.strip().split('\n'):
-        line = line.strip()
-        if not line or line.startswith('#'):
-            continue
-        
-        if line.startswith('[') and line.endswith(']'):
-            current_section = line[1:-1].lower()
-            config[current_section] = {}
-            continue
-        
-        if '=' in line:
-            key, value = line.split('=', 1)
-            key = key.strip()
-            value = parse_value(value.strip())
-            
-            if current_section:
-                config[current_section][key] = value
-            else:
-                config[key] = value
-    
-    return config
-
-
-def parse_value(value: str):
-    """解析配置值"""
-    if value.lower() in ['true', 'yes']:
-        return True
-    if value.lower() in ['false', 'no']:
-        return False
-    if value.lower() in ['null', 'none']:
-        return None
-    try:
-        return int(value)
-    except ValueError:
-        pass
-    try:
-        return float(value)
-    except ValueError:
-        pass
-    if ',' in value:
-        return [parse_value(v.strip()) for v in value.split(',')]
-    return value
-
-
-def get_default_data_root():
-    """获取默认数据根目录"""
-    script_dir = Path(__file__).parent.resolve()
-    return script_dir.parent.parent.parent / 'TrainingData'
+    return add_common_training_args(parser).parse_args()
 
 
 def main():
     args = parse_args()
     
-    # 加载配置文件（如果提供）
-    config = {}
-    if args.config:
-        print(f"Loading config from: {args.config}")
-        file_config = load_config_from_file(args.config)
-        # 扁平化配置
-        for section, values in file_config.items():
-            if isinstance(values, dict):
-                config.update(values)
-            else:
-                config[section] = values
+    # 获取完整配置
+    config = get_training_config(args)
     
-    # 命令行参数覆盖配置
-    script_dir = Path(__file__).parent.resolve()
-    project_root = script_dir.parent.parent.parent
+    # 项目路径
+    project_root = get_project_root()
     
-    # 数据根目录
-    data_root = args.data_root or config.get('root_dir') or str(get_default_data_root())
-    
-    # 数据子目录
-    if args.data:
-        data_subdirs = [d.strip() for d in args.data.split(',')]
-    elif config.get('subdirs'):
-        data_subdirs = config.get('subdirs')
-        if isinstance(data_subdirs, str):
-            data_subdirs = [d.strip() for d in data_subdirs.split(',')]
-    else:
-        data_subdirs = None  # 自动发现所有
-    
-    # 加载方式 (Windows上mmap+ConcatDataset有问题，默认预加载)
-    if args.streaming:
-        preload = False
-    elif args.preload:
-        preload = True
-    else:
-        preload = config.get('preload', True)  # 默认True，避免Windows mmap问题
-    
-    max_memory = args.max_memory or config.get('max_memory_gb', 4.0)
-    
-    # 训练参数
-    system = platform.system()
-    default_batch = 64 if system == 'Darwin' else 128
-    
-    epochs = args.epochs or config.get('epochs', 50)
-    batch_size = args.batch_size or config.get('batch_size') or default_batch
-    lr = args.lr or config.get('lr', 0.001)
-    val_split = args.val_split or config.get('val_split', 0.02)
-    seed = args.seed or config.get('seed', 42)
+    # 提取配置参数
+    data_root = config.get('data_root') or config.get('root_dir') or str(get_default_data_root())
+    data_subdirs = config.get('data_subdirs') or config.get('subdirs')
+    model_name = config.get('model_name', 'PitchNetBaseline')
+    pretrained_path = config.get('pretrained') or config.get('path')
+    epochs = config.get('epochs', 50)
+    batch_size = config.get('batch_size', 64)
+    lr = config.get('lr', 0.001)
+    val_split = config.get('val_split', 0.02)
+    seed = config.get('seed', 42)
+    preload = config.get('preload', True)
+    use_viz = not config.get('no_viz', False)
     
     print("=" * 70)
     print("Training Configuration")
     print("=" * 70)
+    print(f"Model: {model_name}")
     print(f"Data root: {data_root}")
     print(f"Data subdirs: {data_subdirs or 'Auto-discover all'}")
     print(f"Preload: {preload}")
@@ -392,13 +259,10 @@ def main():
         device = torch.device('cpu')
         print(f"\nDevice: CPU")
     
-    # 加载数据集（按类型分别加载并拆分，确保验证集包含所有类型）
+    # 加载数据集
     print(f"\nLoading datasets...")
-    from dataset import DatasetReader
-    from torch.utils.data import ConcatDataset
-    
-    # 发现数据子目录
     data_root_path = Path(data_root)
+    
     if data_subdirs:
         data_dirs = [data_root_path / d for d in data_subdirs]
     else:
@@ -411,7 +275,7 @@ def main():
     
     for data_dir in data_dirs:
         ds = DatasetReader(str(data_dir), preload=preload, device=str(device))
-        n_val = max(1, int(len(ds) * val_split))  # 至少1个验证样本
+        n_val = max(1, int(len(ds) * val_split))
         n_train = len(ds) - n_val
         
         ds_train, ds_val = random_split(ds, [n_train, n_val])
@@ -440,16 +304,17 @@ def main():
     
     print(f"\nTrain: {len(train_dataset)}, Val: {len(val_dataset)}")
     
-    # 模型
-    print(f"\nInitializing model: {args.model}")
-    if args.model == 'PitchNetBaseline':
-        model = PitchNetBaseline()
-    else:
-        raise ValueError(f"Unknown model: {args.model}")
+    # 模型创建（使用工厂函数）
+    print(f"\nInitializing model: {model_name}")
+    try:
+        model = create_model(model_name)
+    except ValueError as e:
+        print(f"Error: {e}")
+        print(f"Available models: {list_available_models()}")
+        return
     
     # 加载预训练权重
-    if args.pretrained or config.get('path'):
-        pretrained_path = args.pretrained or config.get('path')
+    if pretrained_path:
         print(f"Loading pretrained weights from: {pretrained_path}")
         checkpoint = torch.load(pretrained_path, map_location='cpu')
         model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
@@ -464,7 +329,9 @@ def main():
         conf_weight=1.0,
         energy_weight=0.3,
         sparsity_weight=0.01,
-        energy_loss_type='kl'
+        energy_loss_type='kl',
+        enhanced=True,  # 使用 Focal Loss + Sharpness
+        focal_gamma=2.0  # Focal loss 聚焦参数，越大越关注难样本
     ).to(device)
     
     # GPU预热
@@ -477,8 +344,7 @@ def main():
             torch.cuda.synchronize()
         print("Ready!")
     
-    # 可视化 (可选，添加 --no-viz 参数可禁用)
-    use_viz = not getattr(args, 'no_viz', False)
+    # 可视化
     live_plot = None
     if use_viz:
         print("\nOpening visualization window...")
@@ -568,18 +434,16 @@ def main():
             onnx_path = None
             try:
                 print("\n[DEBUG] Starting ONNX export process...")
-                # 准备模型导出（eval模式，移到CPU）
                 model.eval()
-                print("[DEBUG] Model set to eval mode")
                 model.cpu()
-                print("[DEBUG] Model moved to CPU")
                 
                 training_info = format_training_info(
-                    config={'data_root': data_root, 'subdirs': data_subdirs, 'epochs': epochs, 'batch_size': batch_size, 'lr': lr},
+                    config={'data_root': data_root, 'subdirs': data_subdirs, 
+                            'epochs': epochs, 'batch_size': batch_size, 'lr': lr,
+                            'model': model_name},
                     best_val_loss=best_val_loss,
                     device=device
                 )
-                print(f"[DEBUG] Training info prepared")
                 
                 print(f"\nExporting ONNX to: {mlmodel_dir}")
                 onnx_path = export_model_with_metadata(model, str(mlmodel_dir), timestamp, training_info)
@@ -594,6 +458,7 @@ def main():
             print("\n" + "=" * 70)
             print("TRAINING COMPLETED SUCCESSFULLY!")
             print("=" * 70)
+            print(f"Model:         {model_name}")
             print(f"Best model:    {checkpoint_dir / 'best_model_live.pth'}")
             print(f"Final model:   {final_path}")
             print(f"{onnx_msg}")

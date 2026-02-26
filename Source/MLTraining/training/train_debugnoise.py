@@ -4,7 +4,7 @@
 
 使用方式:
     python train_debugnoise.py --config trainconfig.txt
-    python train_debugnoise.py --epochs 100 --batch-size 64 --lr 0.0005
+    python train_debugnoise.py --model PitchNetEnhanced --epochs 100 --batch-size 64 --lr 0.0005
 """
 
 import os
@@ -43,9 +43,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / 'Model'))
 
-from PitchNetBaseline import PitchNetBaseline
+# 导入配置工具
+from train_config_utils import (
+    add_common_training_args, get_training_config,
+    create_model, list_available_models,
+    get_default_data_root, get_project_root
+)
 from dataset import DatasetReader
-from loss import EnergyLoss, ConfidenceLoss, PitchDetectionLoss
+from loss import PitchDetectionLoss
 from modeloutput_utils import export_model_with_metadata, format_training_info
 
 
@@ -54,9 +59,7 @@ class DebugTrainingPlot:
     
     def __init__(self):
         plt.ion()
-        # 2x3 布局：Train Loss | Sanity Val Loss | Noise Val Loss
-        #           Conf Loss  | Sanity Conf     | Noise Conf
-        #           Energy Loss| Sanity Energy   | Noise Energy
+        # 2x3 布局
         self.fig, self.axes = plt.subplots(3, 3, figsize=(15, 10))
         self.fig.suptitle('Training Progress - Separate Validation Sets', fontsize=14)
         
@@ -228,147 +231,34 @@ def validate(model, dataloader, device, criterion):
 def parse_args():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(description='Debug training with separate validation sets')
-    
-    parser.add_argument('--config', type=str, default=None,
-                       help='Path to config file (.txt, .json, or .yaml)')
-    parser.add_argument('--data-root', type=str, default=None,
-                       help='Root directory for training data')
-    parser.add_argument('--preload', action='store_true', default=None,
-                       help='Preload data to memory')
-    parser.add_argument('--streaming', action='store_true',
-                       help='Use streaming mode (no preload)')
-    parser.add_argument('--epochs', type=int, default=50,
-                       help='Number of training epochs')
-    parser.add_argument('--batch-size', type=int, default=None,
-                       help='Batch size (default: 64 Mac, 128 others)')
-    parser.add_argument('--lr', type=float, default=0.001,
-                       help='Learning rate')
-    parser.add_argument('--val-split', type=float, default=0.02,
-                       help='Validation split ratio')
-    parser.add_argument('--seed', type=int, default=42,
-                       help='Random seed')
-    parser.add_argument('--no-viz', action='store_true',
-                       help='Disable visualization window')
-    
-    return parser.parse_args()
-
-
-def load_config_from_file(config_path: str):
-    """从文件加载配置"""
-    path = Path(config_path)
-    
-    if not path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
-    
-    suffix = path.suffix.lower()
-    
-    with open(path, 'r', encoding='utf-8') as f:
-        if suffix == '.json':
-            import json
-            return json.load(f)
-        elif suffix in ['.yaml', '.yml']:
-            import yaml
-            return yaml.safe_load(f)
-        else:
-            return parse_txt_config(f.read())
-
-
-def parse_txt_config(content: str):
-    """解析简单文本配置"""
-    config = {}
-    current_section = None
-    
-    for line in content.strip().split('\n'):
-        line = line.strip()
-        if not line or line.startswith('#'):
-            continue
-        
-        if line.startswith('[') and line.endswith(']'):
-            current_section = line[1:-1].lower()
-            config[current_section] = {}
-            continue
-        
-        if '=' in line:
-            key, value = line.split('=', 1)
-            key = key.strip()
-            value = parse_value(value.strip())
-            
-            if current_section:
-                config[current_section][key] = value
-            else:
-                config[key] = value
-    
-    return config
-
-
-def parse_value(value: str):
-    """解析配置值"""
-    if value.lower() in ['true', 'yes']:
-        return True
-    if value.lower() in ['false', 'no']:
-        return False
-    if value.lower() in ['null', 'none']:
-        return None
-    try:
-        return int(value)
-    except ValueError:
-        pass
-    try:
-        return float(value)
-    except ValueError:
-        pass
-    if ',' in value:
-        return [parse_value(v.strip()) for v in value.split(',')]
-    return value
-
-
-def get_default_data_root():
-    """获取默认数据根目录"""
-    script_dir = Path(__file__).parent.resolve()
-    return script_dir.parent.parent.parent / 'TrainingData'
+    return add_common_training_args(parser).parse_args()
 
 
 def main():
     args = parse_args()
     
-    # 加载配置文件
-    config = {}
-    if args.config:
-        print(f"Loading config from: {args.config}")
-        file_config = load_config_from_file(args.config)
-        for section, values in file_config.items():
-            if isinstance(values, dict):
-                config.update(values)
-            else:
-                config[section] = values
+    # 获取完整配置
+    config = get_training_config(args)
     
-    script_dir = Path(__file__).parent.resolve()
-    project_root = script_dir.parent.parent.parent
+    # 项目路径
+    project_root = get_project_root()
     
-    # 数据根目录
-    data_root = args.data_root or config.get('root_dir') or str(get_default_data_root())
-    
-    # 加载方式
-    if args.streaming:
-        preload = False
-    elif args.preload:
-        preload = True
-    else:
-        preload = config.get('preload', True)
-    
-    # 训练参数
-    system = platform.system()
-    default_batch = 64 if system == 'Darwin' else 128
-    
-    epochs = args.epochs or config.get('epochs', 50)
-    batch_size = args.batch_size or config.get('batch_size') or default_batch
-    lr = args.lr or config.get('lr', 0.001)
-    val_split = args.val_split or config.get('val_split', 0.02)
-    seed = args.seed or config.get('seed', 42)
+    # 提取配置参数
+    data_root = config.get('data_root') or config.get('root_dir') or str(get_default_data_root())
+    model_name = config.get('model_name', 'PitchNetBaseline')
+    pretrained_path = config.get('pretrained') or config.get('path')
+    epochs = config.get('epochs', 50)
+    batch_size = config.get('batch_size', 64)
+    lr = config.get('lr', 0.001)
+    val_split = config.get('val_split', 0.02)
+    seed = config.get('seed', 42)
+    preload = config.get('preload', True)
+    use_viz = not config.get('no_viz', False)
     
     print("=" * 70)
     print("Debug Training - Separate Validation Sets")
     print("=" * 70)
+    print(f"Model: {model_name}")
     print(f"Data root: {data_root}")
     print(f"Preload: {preload}")
     print(f"Epochs: {epochs}, Batch: {batch_size}, LR: {lr}")
@@ -437,9 +327,21 @@ def main():
     
     print(f"\nTrain: {len(train_dataset)}, Sanity Val: {len(sanity_val)}, Noise Val: {len(noise_val)}")
     
-    # 模型
-    print(f"\nInitializing model: PitchNetBaseline")
-    model = PitchNetBaseline()
+    # 模型创建（使用工厂函数）
+    print(f"\nInitializing model: {model_name}")
+    try:
+        model = create_model(model_name)
+    except ValueError as e:
+        print(f"Error: {e}")
+        print(f"Available models: {list_available_models()}")
+        return
+    
+    # 加载预训练权重
+    if pretrained_path:
+        print(f"Loading pretrained weights from: {pretrained_path}")
+        checkpoint = torch.load(pretrained_path, map_location='cpu')
+        model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
+    
     model = model.to(device)
     print(f"Parameters: {sum(p.numel() for p in model.parameters())/1e6:.2f}M")
     
@@ -464,7 +366,6 @@ def main():
         print("Ready!")
     
     # 可视化
-    use_viz = not getattr(args, 'no_viz', False)
     live_plot = None
     if use_viz:
         print("\nOpening visualization window...")
@@ -577,7 +478,8 @@ def main():
                 
                 training_info = format_training_info(
                     config={'data_root': data_root, 'subdirs': ['SingleSanity', 'NoiseDataset'], 
-                            'epochs': epochs, 'batch_size': batch_size, 'lr': lr},
+                            'epochs': epochs, 'batch_size': batch_size, 'lr': lr,
+                            'model': model_name},
                     best_val_loss=best_val_loss,
                     device=device
                 )
@@ -595,6 +497,7 @@ def main():
             print("\n" + "=" * 70)
             print("TRAINING COMPLETED SUCCESSFULLY!")
             print("=" * 70)
+            print(f"Model:         {model_name}")
             print(f"Best model:    {checkpoint_dir / 'best_model_debug.pth'}")
             print(f"Final model:   {final_path}")
             print(f"{onnx_msg}")

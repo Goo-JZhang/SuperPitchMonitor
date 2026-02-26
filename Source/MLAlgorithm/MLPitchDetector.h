@@ -13,6 +13,7 @@
 // Platform-specific execution provider headers
 #if defined(JUCE_MAC) || defined(JUCE_IOS)
     // CoreML EP header (if available in the build)
+    // For source build: include path includes onnxruntime/core/providers/coreml/
     #if __has_include(<coreml_provider_factory.h>)
         #include <coreml_provider_factory.h>
         #define HAS_COREML_EP 1
@@ -21,6 +22,7 @@
     #endif
 #elif defined(JUCE_WINDOWS)
     // CUDA EP header (preferred for NVIDIA GPUs like RTX 4080S)
+    // For source build: include path includes onnxruntime/core/providers/cuda/
     #if __has_include(<cuda_provider_factory.h>)
         #include <cuda_provider_factory.h>
         #define HAS_CUDA_EP 1
@@ -28,6 +30,7 @@
         #define HAS_CUDA_EP 0
     #endif
     // DirectML EP header (fallback for AMD/Intel GPUs)
+    // For source build: include path includes onnxruntime/core/providers/dml/
     #if __has_include(<dml_provider_factory.h>)
         #include <dml_provider_factory.h>
         #define HAS_DML_EP 1
