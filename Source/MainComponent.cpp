@@ -129,6 +129,45 @@ void MainComponent::connectSettingsCallbacks()
     // Close button handler
     settingsPanel_->onClose([this]() {
         settingsPanel_->setVisible(false);
+        
+        // Restore all background components visibility
+        if (pitchWaterfall_) pitchWaterfall_->setVisible(true);
+        if (spectrumDisplay_) spectrumDisplay_->setVisible(true);
+        if (pitchDisplay_) pitchDisplay_->setVisible(true);
+        statusLabel_.setVisible(true);
+        inputLevelLabel_.setVisible(true);
+        fpsLabel_.setVisible(true);
+        settingsButton_.setVisible(true);
+        startStopButton_.setVisible(true);
+        
+        // Force full repaint to clear any artifacts
+        repaint();
+    });
+    
+    // Visibility change handler - hide/show background components completely
+    settingsPanel_->onVisibilityChanged([this](bool isVisible) {
+        // Hide/show all background components to prevent ghosting
+        if (pitchWaterfall_) pitchWaterfall_->setVisible(!isVisible);
+        if (spectrumDisplay_) spectrumDisplay_->setVisible(!isVisible);
+        if (pitchDisplay_) pitchDisplay_->setVisible(!isVisible);
+        if (isVisible)
+        {
+            statusLabel_.setVisible(false);
+            inputLevelLabel_.setVisible(false);
+            fpsLabel_.setVisible(false);
+            settingsButton_.setVisible(false);
+            startStopButton_.setVisible(false);
+        }
+        else
+        {
+            statusLabel_.setVisible(true);
+            inputLevelLabel_.setVisible(true);
+            fpsLabel_.setVisible(true);
+            settingsButton_.setVisible(true);
+            startStopButton_.setVisible(true);
+            // Force full repaint after restoring visibility
+            repaint();
+        }
     });
     
     auto* content = settingsPanel_->getContent();
@@ -316,6 +355,10 @@ void MainComponent::setupAudio()
 
 void MainComponent::paint(juce::Graphics& g)
 {
+    // If settings panel is visible, don't draw background (let panel handle it)
+    if (settingsPanel_ && settingsPanel_->isVisible())
+        return;
+    
     // Dark gradient background
     juce::ColourGradient gradient(
         juce::Colour(0xFF1A1A20), 0.0f, 0.0f,
@@ -345,8 +388,8 @@ void MainComponent::resized()
 {
     auto bounds = getLocalBounds();
     
-    // Settings panel (fullscreen overlay)
-    settingsPanel_->setBounds(bounds);
+    // Settings panel (fullscreen overlay) - MUST use original bounds, not modified
+    settingsPanel_->setBounds(getLocalBounds());
     
     // Status bar at top
     auto statusBar = bounds.removeFromTop(statusBarHeight);
@@ -425,6 +468,7 @@ void MainComponent::buttonClicked(juce::Button* button)
     }
     else if (button == &settingsButton_)
     {
+        // Show settings panel as overlay
         settingsPanel_->setVisible(true);
         settingsPanel_->toFront(true);
     }

@@ -19,6 +19,10 @@ SpectrumDisplay::~SpectrumDisplay()
 
 void SpectrumDisplay::timerCallback()
 {
+    // Skip updates if paused (e.g., when Settings panel is open)
+    if (isPaused_)
+        return;
+    
     frameCount_++;
     if (frameCount_ % skipFrames_ == 0)
     {

@@ -68,6 +68,10 @@ public:
     
     // Perform jump to best pitch or reset to A4 (for double-click)
     void performJumpToBestOrReset();
+    
+    // Pause/unpause rendering (for modal dialogs)
+    void setPaused(bool paused) { isPaused_ = paused; }
+    bool isPaused() const { return isPaused_; }
 
 private:
     // History buffer - stores pitch data over time
@@ -124,6 +128,9 @@ private:
     float minLogFreq_;
     float maxLogFreq_;
     float logFreqRange_;
+    
+    // Pause state (for modal dialogs)
+    bool isPaused_ = false;
     
     // Layout margins for axes
     static constexpr int leftMargin = 50;

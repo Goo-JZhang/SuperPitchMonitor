@@ -21,6 +21,10 @@ PitchWaterfallDisplay::~PitchWaterfallDisplay()
 
 void PitchWaterfallDisplay::timerCallback()
 {
+    // Skip updates if paused (e.g., when Settings panel is open)
+    if (isPaused_)
+        return;
+    
     // Auto-tracking update
     if (autoTrackingEnabled_)
     {

@@ -665,6 +665,10 @@ void SettingsContent::comboBoxChanged(juce::ComboBox* comboBox)
                 juce::String fileName = fileCombo_.getText();
                 SPM_LOG_INFO("[SettingsPanel] User selected file: " + fileName);
                 fileInput->loadTestFile(fileName);
+                
+                // Notify parent that source name has changed
+                if (sourceChangedCallback_)
+                    sourceChangedCallback_(currentSource_);
             }
         }
     }
@@ -696,17 +700,19 @@ void SettingsContent::comboBoxChanged(juce::ComboBox* comboBox)
 
 SettingsPanel::SettingsPanel()
 {
-    setOpaque(true);
+    setOpaque(true);  // Critical: opaque to prevent background bleeding through
     setVisible(false);
     
     // Create content
     content_ = std::make_unique<SettingsContent>();
+    content_->setOpaque(true);  // Ensure content is opaque
     
     // Create viewport with scrollbar
     viewport_ = std::make_unique<juce::Viewport>("SettingsViewport");
     viewport_->setViewedComponent(content_.get(), false);
     viewport_->setScrollBarsShown(true, false);  // Vertical only
     viewport_->setScrollOnDragMode(juce::Viewport::ScrollOnDragMode::all);  // Touch/drag support
+    viewport_->setOpaque(true);  // Ensure viewport doesn't show through
     addAndMakeVisible(viewport_.get());
 }
 
@@ -714,16 +720,32 @@ SettingsPanel::~SettingsPanel() = default;
 
 void SettingsPanel::paint(juce::Graphics& g)
 {
-    // Semi-transparent overlay
-    g.fillAll(juce::Colour(0xDD1A1A20));
+    auto bounds = getLocalBounds();
     
-    // Panel border
-    auto bounds = getLocalBounds().withSizeKeepingCentre(600, 700);
+    // IMPORTANT: Fill entire screen with solid color first to completely cover background
+    // Use the main app's background color so it looks natural
+    juce::ColourGradient gradient(
+        juce::Colour(0xFF1A1A20), 0.0f, 0.0f,
+        juce::Colour(0xFF0D0D12), 0.0f, (float)bounds.getHeight(),
+        false
+    );
+    g.setGradientFill(gradient);
+    g.fillAll();
+    
+    // Draw centered settings panel
+    auto panelBounds = bounds.withSizeKeepingCentre(600, 700);
+    
+    // Panel shadow
+    g.setColour(juce::Colours::black.withAlpha(0.4f));
+    g.fillRoundedRectangle(panelBounds.toFloat().expanded(6), 20.0f);
+    
+    // Solid panel background - completely opaque
     g.setColour(juce::Colour(0xFF2A2A35));
-    g.fillRoundedRectangle(bounds.toFloat(), 16.0f);
+    g.fillRoundedRectangle(panelBounds.toFloat(), 16.0f);
     
+    // Border
     g.setColour(juce::Colours::white.withAlpha(0.3f));
-    g.drawRoundedRectangle(bounds.toFloat(), 16.0f, 2.0f);
+    g.drawRoundedRectangle(panelBounds.toFloat(), 16.0f, 2.0f);
 }
 
 void SettingsPanel::resized()
@@ -739,6 +761,10 @@ void SettingsPanel::setVisible(bool shouldBeVisible)
     {
         viewport_->setViewPosition(0, 0);  // Scroll to top when shown
     }
+    
+    // Notify parent of visibility change
+    if (visibilityCallback_)
+        visibilityCallback_(shouldBeVisible);
 }
 
 //=============================================================================

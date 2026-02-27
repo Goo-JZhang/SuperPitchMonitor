@@ -208,9 +208,14 @@ public:
     void onClose(SettingsContent::CloseCallback callback) { content_->onClose(callback); }
     
     void setVisible(bool shouldBeVisible) override;
+    
+    // Visibility changed callback - notifies when panel is shown/hidden
+    using VisibilityCallback = std::function<void(bool)>;
+    void onVisibilityChanged(VisibilityCallback callback) { visibilityCallback_ = callback; }
 
 private:
     std::unique_ptr<SettingsContent> content_;
+    VisibilityCallback visibilityCallback_;
     std::unique_ptr<juce::Viewport> viewport_;
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SettingsPanel)

@@ -55,6 +55,10 @@ public:
     // Set ML enabled preview state (used before Start to show expected mode)
     void setMLPreviewEnabled(bool enabled) { mlPreviewEnabled_ = enabled; repaint(); }
     bool isMLPreviewEnabled() const { return mlPreviewEnabled_; }
+    
+    // Pause/unpause rendering (for modal dialogs)
+    void setPaused(bool paused) { isPaused_ = paused; }
+    bool isPaused() const { return isPaused_; }
 
 private:
     SpectrumData currentData_;
@@ -125,6 +129,9 @@ private:
     
     // ML preview state (used before Start to show expected mode from Settings)
     bool mlPreviewEnabled_ = false;
+    
+    // Pause state (for modal dialogs)
+    bool isPaused_ = false;
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumDisplay)
 };
