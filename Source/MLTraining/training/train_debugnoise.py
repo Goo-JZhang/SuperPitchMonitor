@@ -50,7 +50,7 @@ from train_config_utils import (
     get_default_data_root, get_project_root
 )
 from dataset import DatasetReader
-from loss import PitchDetectionLoss
+from loss import PitchDetectionLoss, get_loss_config
 from modeloutput_utils import export_model_with_metadata, format_training_info
 
 
@@ -173,7 +173,7 @@ class DebugTrainingPlot:
 def train_epoch(model, dataloader, optimizer, device, criterion):
     """训练一个 epoch"""
     model.train()
-    metrics = {'total': 0, 'confidence': 0, 'energy': 0, 'sparsity': 0}
+    metrics = {'total': 0, 'confidence': 0, 'focal': 0, 'tversky': 0, 'sharpness': 0, 'energy': 0, 'sparsity': 0}
     count = 0
     
     for batch in dataloader:
@@ -194,6 +194,9 @@ def train_epoch(model, dataloader, optimizer, device, criterion):
         
         metrics['total'] += losses['total'].item()
         metrics['confidence'] += losses['confidence'].item()
+        metrics['focal'] += losses.get('focal', torch.tensor(0.0)).item()
+        metrics['tversky'] += losses.get('tversky', torch.tensor(0.0)).item()
+        metrics['sharpness'] += losses.get('sharpness', torch.tensor(0.0)).item()
         metrics['energy'] += losses['energy'].item()
         metrics['sparsity'] += losses['sparsity'].item()
         count += 1
@@ -204,7 +207,7 @@ def train_epoch(model, dataloader, optimizer, device, criterion):
 def validate(model, dataloader, device, criterion):
     """验证函数"""
     model.eval()
-    metrics = {'total': 0, 'confidence': 0, 'energy': 0, 'sparsity': 0}
+    metrics = {'total': 0, 'confidence': 0, 'focal': 0, 'tversky': 0, 'sharpness': 0, 'energy': 0, 'sparsity': 0}
     count = 0
     
     with torch.no_grad():
@@ -348,12 +351,9 @@ def main():
     # 优化器
     optimizer = AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
-    criterion = PitchDetectionLoss(
-        conf_weight=1.0,
-        energy_weight=0.3,
-        sparsity_weight=0.01,
-        energy_loss_type='kl'
-    ).to(device)
+    # 使用推荐配置
+    loss_config = get_loss_config('default')
+    criterion = PitchDetectionLoss(**loss_config).to(device)
     
     # GPU预热
     if device.type in ['mps', 'cuda']:
@@ -428,18 +428,31 @@ def main():
             
             elapsed = time.time() - start
             
+            # 构建详细的损失日志
+            train_conf = train_metrics.get('focal', train_metrics.get('confidence', 0))
+            train_tversky = train_metrics.get('tversky', 0)
+            train_sharp = train_metrics.get('sharpness', 0)
+            
+            sanity_conf = sanity_metrics.get('focal', sanity_metrics.get('confidence', 0))
+            sanity_tversky = sanity_metrics.get('tversky', 0)
+            sanity_sharp = sanity_metrics.get('sharpness', 0)
+            
+            noise_conf = noise_metrics.get('focal', noise_metrics.get('confidence', 0))
+            noise_tversky = noise_metrics.get('tversky', 0)
+            noise_sharp = noise_metrics.get('sharpness', 0)
+            
             # 打印详细结果
             print(f"{epoch:6d} | {elapsed:5.1f}s | "
                   f"{train_metrics['total']:10.4f} | "
                   f"{sanity_metrics['total']:10.4f} | "
                   f"{noise_metrics['total']:10.4f} | "
                   f"{current_lr:10.6f}")
-            print(f"         |       | c:{train_metrics['confidence']:8.3f} | "
-                  f"c:{sanity_metrics['confidence']:8.3f} | "
-                  f"c:{noise_metrics['confidence']:8.3f} |")
-            print(f"         |       | e:{train_metrics['energy']:8.3f} | "
-                  f"e:{sanity_metrics['energy']:8.3f} | "
-                  f"e:{noise_metrics['energy']:8.3f} |")
+            print(f"         |       | f:{train_conf:8.3f} t:{train_tversky:.3f} | "
+                  f"f:{sanity_conf:8.3f} t:{sanity_tversky:.3f} | "
+                  f"f:{noise_conf:8.3f} t:{noise_tversky:.3f} |")
+            print(f"         |       | s:{train_sharp:8.3f} e:{train_metrics['energy']:8.3f} | "
+                  f"s:{sanity_sharp:8.3f} e:{sanity_metrics['energy']:8.3f} | "
+                  f"s:{noise_sharp:8.3f} e:{noise_metrics['energy']:8.3f} |")
             print("-" * 90)
             
             # GPU内存清理

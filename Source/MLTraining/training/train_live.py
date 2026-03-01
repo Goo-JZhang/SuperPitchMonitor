@@ -62,7 +62,7 @@ from train_config_utils import (
     get_default_data_root, get_project_root
 )
 from dataset import DatasetReader
-from loss import PitchDetectionLoss
+from loss import PitchDetectionLoss, get_loss_config
 from modeloutput_utils import export_model_with_metadata, format_training_info
 
 
@@ -149,7 +149,7 @@ class LiveTrainingPlot:
 def train_epoch(model, dataloader, optimizer, device, criterion):
     """训练一个epoch"""
     model.train()
-    metrics = {'total': 0, 'confidence': 0, 'energy': 0, 'sparsity': 0}
+    metrics = {'total': 0, 'confidence': 0, 'focal': 0, 'tversky': 0, 'sharpness': 0, 'energy': 0, 'sparsity': 0}
     count = 0
     
     for batch in dataloader:
@@ -170,6 +170,9 @@ def train_epoch(model, dataloader, optimizer, device, criterion):
         
         metrics['total'] += losses['total'].item()
         metrics['confidence'] += losses['confidence'].item()
+        metrics['focal'] += losses.get('focal', torch.tensor(0.0)).item()
+        metrics['tversky'] += losses.get('tversky', torch.tensor(0.0)).item()
+        metrics['sharpness'] += losses.get('sharpness', torch.tensor(0.0)).item()
         metrics['energy'] += losses['energy'].item()
         metrics['sparsity'] += losses['sparsity'].item()
         count += 1
@@ -180,7 +183,7 @@ def train_epoch(model, dataloader, optimizer, device, criterion):
 def validate(model, dataloader, device, criterion):
     """验证"""
     model.eval()
-    metrics = {'total': 0, 'confidence': 0, 'energy': 0, 'sparsity': 0}
+    metrics = {'total': 0, 'confidence': 0, 'focal': 0, 'tversky': 0, 'sharpness': 0, 'energy': 0, 'sparsity': 0}
     count = 0
     
     with torch.no_grad():
@@ -197,6 +200,9 @@ def validate(model, dataloader, device, criterion):
             
             metrics['total'] += losses['total'].item()
             metrics['confidence'] += losses['confidence'].item()
+            metrics['focal'] += losses.get('focal', torch.tensor(0.0)).item()
+            metrics['tversky'] += losses.get('tversky', torch.tensor(0.0)).item()
+            metrics['sharpness'] += losses.get('sharpness', torch.tensor(0.0)).item()
             metrics['energy'] += losses['energy'].item()
             metrics['sparsity'] += losses['sparsity'].item()
             count += 1
@@ -325,14 +331,9 @@ def main():
     # 优化器
     optimizer = AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
-    criterion = PitchDetectionLoss(
-        conf_weight=1.0,
-        energy_weight=0.3,
-        sparsity_weight=0.01,
-        energy_loss_type='kl',
-        enhanced=True,  # 使用 Focal Loss + Sharpness
-        focal_gamma=2.0  # Focal loss 聚焦参数，越大越关注难样本
-    ).to(device)
+    # 使用推荐配置，可选择 'default', 'position_focused', 'peak_focused', 'balanced', 'simple'
+    loss_config = get_loss_config('default')
+    criterion = PitchDetectionLoss(**loss_config).to(device)
     
     # GPU预热
     if device.type in ['mps', 'cuda']:
@@ -398,9 +399,20 @@ def main():
                 }, str(checkpoint_dir / 'best_model_live.pth'))
             
             elapsed = time.time() - start
+            # 构建详细的损失日志
+            train_conf = train_metrics.get('focal', train_metrics.get('confidence', 0))
+            train_tversky = train_metrics.get('tversky', 0)
+            train_sharp = train_metrics.get('sharpness', 0)
+            train_energy = train_metrics['energy']
+            
+            val_conf = val_metrics.get('focal', val_metrics.get('confidence', 0))
+            val_tversky = val_metrics.get('tversky', 0)
+            val_sharp = val_metrics.get('sharpness', 0)
+            val_energy = val_metrics['energy']
+            
             print(f"Epoch {epoch:2d}/{epochs} | {elapsed:.1f}s | "
-                  f"Train: {train_metrics['total']:.4f} (c:{train_metrics['confidence']:.3f} e:{train_metrics['energy']:.3f}) | "
-                  f"Val: {val_metrics['total']:.4f} (c:{val_metrics['confidence']:.3f} e:{val_metrics['energy']:.3f}) | "
+                  f"Train: {train_metrics['total']:.4f} (f:{train_conf:.3f} t:{train_tversky:.3f} s:{train_sharp:.3f} e:{train_energy:.3f}) | "
+                  f"Val: {val_metrics['total']:.4f} (f:{val_conf:.3f} t:{val_tversky:.3f} s:{val_sharp:.3f} e:{val_energy:.3f}) | "
                   f"LR: {current_lr:.6f}")
             
             # GPU内存清理
